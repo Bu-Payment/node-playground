@@ -8,10 +8,10 @@
   },
   "scripts": {
     "postinstall": "bun run build:sdk:js && bun run build:sdk:types",
-    "build:sdk:js": "tsup node_modules/@bu-payment/node-sdk/src/index.ts --format esm --platform node --target node20 --out-dir node_modules/@bu-payment/node-sdk/dist --clean",
+    "build:sdk:js": "tsup node_modules/@bu-payment/node-sdk/src/index.ts node_modules/@bu-payment/node-sdk/src/browser-guard.ts --format esm,cjs --platform node --target node20 --out-dir node_modules/@bu-payment/node-sdk/dist --clean",
     "build:sdk:types": "tsc -p tsconfig.sdk.json",
     "dev": "bun --watch src/main.ts",
-    "start": "node dist/main.js",
+    "start": "node --env-file=.env dist/main.js",
     "build": "tsup src/main.ts --format esm --platform node --target node20 --out-dir dist --clean",
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",

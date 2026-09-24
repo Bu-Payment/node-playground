@@ -18,13 +18,18 @@ describe("parseEnv", () => {
     expect(env.PORT).toBe(9100);
   });
 
-  it("names every missing variable in one message", () => {
+  it.each(["0", "65536", "9003.5", "-1"])("rejects %s as a port", (port) => {
+    expect(() => parseEnv({ ...VALID_ENV, PORT: port })).toThrow(/PORT is invalid/);
+  });
+
+  it("names every missing variable once, in alphabetical order", () => {
     const call = () => parseEnv({ BUPAYMENT_APP_ID: "app_playground" });
 
     expect(call).toThrow(ConfigurationError);
-    expect(call).toThrow(/BUPAYMENT_API_BASE_URL is missing/);
-    expect(call).toThrow(/BUPAYMENT_KEY_ID is missing/);
-    expect(call).toThrow(/BUPAYMENT_SECRET is missing/);
+    expect(call).toThrow(
+      "Environment is not usable: BUPAYMENT_API_BASE_URL is missing; " +
+        "BUPAYMENT_KEY_ID is missing; BUPAYMENT_SECRET is missing",
+    );
   });
 
   it("separates a blank variable from a malformed one", () => {

@@ -36,4 +36,32 @@ describe("describeFailure", () => {
     });
     expect(JSON.stringify(failure)).not.toContain("ECONNREFUSED");
   });
+
+  it("blames the caller for a parser failure that carries a 4xx status", () => {
+    const failure = describeFailure(Object.assign(new Error("Unexpected token"), { status: 400 }));
+
+    expect(failure).toEqual({
+      status: 400,
+      code: "request_invalid",
+      message: "The request could not be read.",
+    });
+  });
+
+  it("reads statusCode when status is absent", () => {
+    expect(describeFailure(Object.assign(new Error("too large"), { statusCode: 413 })).status).toBe(
+      413,
+    );
+  });
+
+  it.each([
+    { status: 500 },
+    { status: "400" },
+    {},
+  ])("treats %o as an unexpected failure rather than a caller fault", (extra) => {
+    expect(describeFailure(Object.assign(new Error("boom"), extra)).code).toBe("internal_error");
+  });
+
+  it("treats a thrown non-object as an unexpected failure", () => {
+    expect(describeFailure("boom").code).toBe("internal_error");
+  });
 });

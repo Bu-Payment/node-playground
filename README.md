@@ -27,13 +27,24 @@ cp .env.example .env
 bun run dev
 ```
 
+`bun run dev` runs the source under Bun, which loads `.env` itself. The compiled entry point is plain
+Node and does not, so `bun run start` passes `--env-file=.env` explicitly. Build before starting:
+
+```sh
+bun run build
+bun run start
+```
+
 The server listens on <http://127.0.0.1:9003>. Port 9003 avoids the API on 3000, its TLS listener on
 3443, the dashboard on 9000, the admin on 9001, and the browser playground on 9002.
 
 ## Configuration
 
-Every variable is required except `HOST` and `PORT`. A missing or malformed variable aborts the boot
-with a single message naming every offending variable at once.
+Every variable is required except `HOST` and `PORT`. Boot happens in two stages, and the error you
+get says which stage failed. First the environment is checked for shape: a missing or malformed
+variable aborts with one message naming every offending variable at once, in alphabetical order.
+Only then does the SDK check the credentials themselves, and that check stops at the first problem
+it finds, naming the rule rather than the variable.
 
 ```dotenv
 BUPAYMENT_APP_ID=app_replace_with_seeded_value
