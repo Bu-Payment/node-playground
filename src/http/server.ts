@@ -4,9 +4,10 @@ import { createApp } from "./app";
 
 export function startServer(context: AppContext): Server {
   const { host, port } = context.server;
-  const server = createApp(context).listen(port, host, () => {
+  const server = createApp(context).listen(port, host);
+  server.on("listening", () => {
     context.logger.info("Playground is listening", {
-      url: `http://${host}:${boundPort(server) ?? port}`,
+      url: `http://${formatHost(host)}:${port}`,
       environment: context.client.environment,
     });
   });
@@ -21,7 +22,6 @@ export function startServer(context: AppContext): Server {
   return server;
 }
 
-function boundPort(server: Server): number | undefined {
-  const address = server.address();
-  return typeof address === "object" && address !== null ? address.port : undefined;
+function formatHost(host: string): string {
+  return host.includes(":") ? `[${host}]` : host;
 }

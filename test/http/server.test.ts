@@ -1,13 +1,14 @@
 import type { Server } from "node:http";
+import { createServer } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { startServer } from "../../src/http/server";
 import { testContext } from "../fixtures";
 
 const running: Server[] = [];
 
-function start(port: number) {
+function start(port: number, host = "127.0.0.1") {
   const { context, lines } = testContext();
-  const server = startServer({ ...context, server: { host: "127.0.0.1", port } });
+  const server = startServer({ ...context, server: { host, port } });
   running.push(server);
   return { server, lines };
 }
@@ -19,50 +20,62 @@ function settled(server: Server): Promise<void> {
   });
 }
 
+function occupyPort(): Promise<number> {
+  return new Promise((resolve) => {
+    const blocker = createServer();
+    running.push(blocker as unknown as Server);
+    blocker.listen(0, "127.0.0.1", () => {
+      const address = blocker.address();
+      resolve(typeof address === "object" && address !== null ? address.port : 0);
+    });
+  });
+}
+
 afterEach(async () => {
   await Promise.all(running.splice(0).map((server) => new Promise((done) => server.close(done))));
   process.exitCode = 0;
 });
 
 describe("startServer", () => {
-  it("announces the port it actually bound", async () => {
-    const { server, lines } = start(0);
+  it("announces the address it was asked to bind", async () => {
+    const port = await occupyPort();
+    for (const blocker of running.splice(0)) {
+      blocker.close();
+    }
+
+    const { server, lines } = start(port);
     await settled(server);
 
-    const address = server.address();
-    const port = typeof address === "object" && address !== null ? address.port : 0;
     expect(JSON.parse(lines[0] ?? "{}")).toEqual({
       level: "info",
       message: "Playground is listening",
       url: `http://127.0.0.1:${port}`,
       environment: "test",
     });
+    expect(process.exitCode).not.toBe(1);
   });
 
-  it("reports a listen failure as one log line instead of an uncaught exception", async () => {
-    const { server, lines } = start(9003);
-    await settled(server);
-    lines.length = 0;
+  it("reports a port already in use instead of announcing a server that is not there", async () => {
+    const port = await occupyPort();
 
-    server.emit("error", Object.assign(new Error("listen EADDRINUSE"), { code: "EADDRINUSE" }));
+    const { server, lines } = start(port);
+    await settled(server);
 
     expect(JSON.parse(lines[0] ?? "{}")).toEqual({
       level: "error",
       message: "Playground could not listen",
       host: "127.0.0.1",
-      port: 9003,
+      port,
       code: "EADDRINUSE",
     });
+    expect(lines).toHaveLength(1);
     expect(process.exitCode).toBe(1);
   });
 
-  it("names an unlabelled listen failure rather than logging undefined", async () => {
-    const { server, lines } = start(0);
+  it("brackets an IPv6 host so the announced URL stays a URL", async () => {
+    const { server, lines } = start(0, "::1");
     await settled(server);
-    lines.length = 0;
 
-    server.emit("error", new Error("something went wrong"));
-
-    expect(JSON.parse(lines[0] ?? "{}").code).toBe("unknown");
+    expect(JSON.parse(lines[0] ?? "{}").url).toBe("http://[::1]:0");
   });
 });

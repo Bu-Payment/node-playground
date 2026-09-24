@@ -12,12 +12,12 @@ export const VALID_ENV: EnvSource = {
   BUPAYMENT_API_BASE_URL: "http://localhost:3000",
 };
 
-export function collectingLogger() {
+export function testLogger() {
   const lines: string[] = [];
   return { lines, logger: createLogger((line) => lines.push(line)) };
 }
 
 export function testContext(overrides: EnvSource = {}) {
-  const { lines, logger } = collectingLogger();
+  const { lines, logger } = testLogger();
   return { lines, context: createContext(parseEnv({ ...VALID_ENV, ...overrides }), logger) };
 }
