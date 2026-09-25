@@ -20,7 +20,7 @@
     "check": "bun run lint && bun run typecheck && bun run test:coverage && bun run build"
   },
   "dependencies": {
-    "@bu-payment/node-sdk": "github:Bu-Payment/node-sdk#19cd868",
+    "@bu-payment/node-sdk": "github:Bu-Payment/node-sdk#b7bb531",
     "express": "^5.1.0",
     "zod": "^4.1.12"
   },
