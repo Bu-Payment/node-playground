@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_HOST, DEFAULT_PORT, parseEnv } from "../../src/runtime/env";
+import {
+  DEFAULT_CATALOGUE_STORE_PATH,
+  DEFAULT_HOST,
+  DEFAULT_PORT,
+  parseEnv,
+} from "../../src/runtime/env";
 import { ConfigurationError } from "../../src/runtime/errors";
 import { FAKE_SECRET, VALID_ENV } from "../fixtures";
 
@@ -9,6 +14,13 @@ describe("parseEnv", () => {
 
     expect(env.HOST).toBe(DEFAULT_HOST);
     expect(env.PORT).toBe(DEFAULT_PORT);
+    expect(env.CATALOGUE_STORE_PATH).toBe(DEFAULT_CATALOGUE_STORE_PATH);
+  });
+
+  it("reads an explicit catalogue store path", () => {
+    expect(parseEnv({ ...VALID_ENV, CATALOGUE_STORE_PATH: "/srv/mirror.json" })).toMatchObject({
+      CATALOGUE_STORE_PATH: "/srv/mirror.json",
+    });
   });
 
   it("reads an explicit host and port", () => {

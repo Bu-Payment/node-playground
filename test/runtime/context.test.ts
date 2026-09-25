@@ -1,5 +1,9 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
+import { emptyMirror } from "../../src/catalogue/mirror";
 import { createContext } from "../../src/runtime/context";
 import { parseEnv } from "../../src/runtime/env";
 import { createLogger } from "../../src/runtime/logger";
@@ -12,6 +16,27 @@ describe("createContext", () => {
     expect(context.client.environment).toBe("test");
     expect(context.client.applicationId).toBe("app_playground");
     expect(context.client.apiBaseUrl.toString()).toBe("http://localhost:3000/");
+  });
+
+  it("builds an SDK client for the same application and environment", () => {
+    const { context } = testContext();
+
+    expect(context.bupayment.applicationId).toBe("app_playground");
+    expect(context.bupayment.environment).toBe("test");
+  });
+
+  it("keeps the catalogue mirror at the configured path", () => {
+    const directory = mkdtempSync(join(tmpdir(), "playground-context-"));
+    const path = join(directory, "catalogue.json");
+    const context = createContext(
+      parseEnv({ ...VALID_ENV, CATALOGUE_STORE_PATH: path }),
+      createLogger(),
+    );
+
+    context.catalogue.save(emptyMirror());
+
+    expect(existsSync(path)).toBe(true);
+    rmSync(directory, { recursive: true, force: true });
   });
 
   it("carries the listening address", () => {
