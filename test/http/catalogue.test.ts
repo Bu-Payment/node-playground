@@ -1,6 +1,6 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
-import { applyPrice, applyProduct, emptyMirror } from "../../src/catalogue/mirror";
+import { applyPrice, applyProduct, emptyMirror, setProductImage } from "../../src/catalogue/mirror";
 import { memoryStore } from "../../src/catalogue/store";
 import { createApp } from "../../src/http/app";
 import { price, product, unreachableApi } from "../fakes/catalogue-api";
@@ -57,6 +57,30 @@ describe("GET /catalogue", () => {
     });
   });
 
+  it("shows the local image and only the prices of each product", async () => {
+    const mirror = emptyMirror();
+    applyProduct(mirror, product({ id: "prod_a", name: "Alpha" }));
+    applyProduct(mirror, product({ id: "prod_b", name: "Bravo" }));
+    applyPrice(mirror, price({ id: "price_a", productId: "prod_a" }), "2026-09-24T12:00:00Z");
+    applyPrice(mirror, price({ id: "price_b", productId: "prod_b" }), "2026-09-24T12:00:00Z");
+    setProductImage(mirror, "prod_a", "https://cdn.example.test/a.png");
+    const { context } = testContext({}, { fetch: unreachableApi() });
+
+    const response = await request(createApp({ ...context, catalogue: memoryStore(mirror) })).get(
+      "/catalogue",
+    );
+
+    expect(
+      response.body.products.map((row: { imageUrl: string | null; prices: { id: string }[] }) => [
+        row.imageUrl,
+        row.prices.map((entry) => entry.id),
+      ]),
+    ).toEqual([
+      ["https://cdn.example.test/a.png", ["price_a"]],
+      [null, ["price_b"]],
+    ]);
+  });
+
   it("orders products by name", async () => {
     const mirror = emptyMirror();
     applyProduct(mirror, product({ id: "prod_b", name: "Bravo" }));
@@ -97,6 +121,21 @@ describe("PUT /catalogue/products/:productId/image", () => {
     expect(store.load().products.prod_ticket?.imageUrl).toBeNull();
   });
 
+  it.each([
+    "__proto__",
+    "constructor",
+    "toString",
+  ])("treats %s as an unknown product rather than an object key", async (productId) => {
+    const { app } = mirroredApp();
+
+    const response = await request(app)
+      .put(`/catalogue/products/${productId}/image`)
+      .send({ imageUrl: "https://evil.example.test/x.png" });
+
+    expect(response.status).toBe(404);
+    expect(({} as { imageUrl?: unknown }).imageUrl).toBeUndefined();
+  });
+
   it("refuses a product the mirror does not hold", async () => {
     const { app } = mirroredApp();
 
@@ -118,7 +157,7 @@ describe("PUT /catalogue/products/:productId/image", () => {
     const response = await request(app).put("/catalogue/products/prod_ticket/image").send(body);
 
     expect(response.status).toBe(422);
-    expect(response.body.code).toBe("request_invalid");
+    expect(response.body.code).toBe("image_url_invalid");
     expect(store.load().products.prod_ticket?.imageUrl).toBeNull();
   });
 });

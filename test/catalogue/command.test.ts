@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runReconciliation } from "../../src/catalogue/command";
+import { applyProduct, emptyMirror } from "../../src/catalogue/mirror";
 import { fileStore } from "../../src/catalogue/store";
 import { fakeCatalogueApi, product, unreachableApi } from "../fakes/catalogue-api";
 import { testLogger, VALID_ENV } from "../fixtures";
@@ -50,12 +51,17 @@ describe("runReconciliation", () => {
         prices: 0,
         changed: 1,
         unchanged: 0,
+        stale: 0,
       },
     ]);
   });
 
   it("fails without writing when BuPayment is unreachable", async () => {
     const path = storePath();
+    const seeded = emptyMirror();
+    applyProduct(seeded, product({ id: "prod_kept" }));
+    fileStore(path).save(seeded);
+    const before = readFileSync(path, "utf8");
     const { lines, logger } = testLogger();
 
     const code = await runReconciliation(
@@ -65,7 +71,7 @@ describe("runReconciliation", () => {
     );
 
     expect(code).toBe(1);
-    expect(fileStore(path).load().products).toEqual({});
+    expect(readFileSync(path, "utf8")).toBe(before);
     expect(JSON.parse(lines[0] ?? "{}")).toEqual({
       level: "error",
       message: "Catalogue reconciliation failed, local mirror left untouched",

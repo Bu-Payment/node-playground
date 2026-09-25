@@ -83,6 +83,11 @@ body answers `400 request_invalid` and one above the limit answers `413 request_
 the playground does not recognize answers `500 internal_error` with a fixed message, so nothing
 about the failure reaches the caller.
 
+The image route answers `204` on success, `422 image_url_invalid` when `imageUrl` is neither an
+`http(s)` URL nor `null`, and `404 product_not_mirrored` when the mirror holds no product with that
+ID. It has no authorization, which is acceptable only because the playground binds to `127.0.0.1`
+by default; do not expose it on another interface.
+
 ## Catalogue synchronization
 
 BuPayment owns what is chargeable: name, description, amount, currency, recurrence, and whether a
@@ -136,8 +141,14 @@ Every row is applied through the same rule:
   locally, because this application can no longer see it at all (unassigned in the dashboard, for
   instance).
 
-Each change is logged on its own line, followed by a summary. If any page fails, nothing is written
-and the command exits `1`; a half-applied sweep would withdraw everything it had not reached yet.
+Each creation, update and withdrawal is logged on its own line, followed by a summary that also
+counts the unchanged and stale rows. If any page fails, nothing is written and the command exits
+`1`; a half-applied sweep would withdraw everything it had not reached yet.
+
+Two limits are accepted for a reference consumer. The store has no lock: an image set through the
+server while a sweep is between loading and saving the file is overwritten by the sweep. And a
+product reactivated in BuPayment after the active pass but before the inactive pass appears in
+neither, so it is withdrawn until the next sweep restores it.
 
 The compiled equivalent is `bun run build && bun run start:reconcile`.
 
@@ -172,9 +183,10 @@ failures are reported by variable name, never by value.
 A reconciliation that fails during the sweep logs the error code and status only, never the message,
 because an API error body or a network error can quote whatever it was sent. One that fails before
 the sweep, on configuration, logs the validation message, which names the rule and never the value.
-`test/secrets.test.ts` drives the sweep, a startup failure on a malformed secret and every catalogue
-route, including failures that quote the secret, and asserts it appears in none of the captured log
-lines or responses. The webhook endpoint secret joins that test when the webhook route lands; until
+`test/secrets.test.ts` drives the sweep through a network error, an API error body and a malformed
+response that each quote the secret, a reconciliation that cannot start because the secret is
+malformed, and the failure paths of the catalogue routes, and asserts the secret appears in none of
+the captured log lines or responses. The webhook endpoint secret joins that test when the webhook route lands; until
 then the playground does not read one.
 
 ## Layout
@@ -187,8 +199,10 @@ src/main.ts       boots the runtime and starts the HTTP server
 src/reconcile.ts  runs one reconciliation sweep and exits
 ```
 
-`src/runtime` and `src/catalogue` import nothing from Express. A Fastify or Nest playground reuses it unchanged and
-replaces only `src/http`.
+`src/runtime` and `src/catalogue` import nothing from Express and together form the
+framework-agnostic core; they depend on each other, since the runtime context wires the catalogue
+store and the reconciliation command reads the runtime configuration. A Fastify or Nest playground
+reuses both unchanged and replaces only `src/http`.
 
 ## Development
 

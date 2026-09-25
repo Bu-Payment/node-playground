@@ -27,6 +27,7 @@ export async function runReconciliation(
       prices: report.observed.prices,
       changed: report.changes.length,
       unchanged: report.unchanged,
+      stale: report.stale,
     });
     return 0;
   } catch (error) {

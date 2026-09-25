@@ -2,7 +2,7 @@ import type { CatalogueClient, Price, Product } from "@bu-payment/node-sdk";
 import { type ApplyOutcome, applyPrice, applyProduct, type CatalogueMirror } from "./mirror";
 import type { CatalogueStore } from "./store";
 
-export type ChangeKind = Exclude<ApplyOutcome, "unchanged"> | "withdrawn";
+export type ChangeKind = "created" | "updated" | "withdrawn";
 
 export interface CatalogueChange {
   resource: "product" | "price";
@@ -13,6 +13,7 @@ export interface CatalogueChange {
 export interface ReconcileReport {
   observed: { products: number; prices: number };
   unchanged: number;
+  stale: number;
   changes: CatalogueChange[];
 }
 
@@ -34,11 +35,12 @@ export async function reconcileCatalogue(
   const report: ReconcileReport = {
     observed: { products: products.length, prices: prices.length },
     unchanged: 0,
+    stale: 0,
     changes: [],
   };
   const record = (resource: CatalogueChange["resource"], id: string, outcome: ApplyOutcome) => {
-    if (outcome === "unchanged") {
-      report.unchanged += 1;
+    if (outcome === "unchanged" || outcome === "stale") {
+      report[outcome] += 1;
       return;
     }
     report.changes.push({ resource, id, change: outcome });

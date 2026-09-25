@@ -86,7 +86,8 @@ describe("reconcileCatalogue", () => {
       store,
     );
 
-    expect(report.changes).toEqual([{ resource: "product", id: "prod_1", change: "stale" }]);
+    expect(report.changes).toEqual([]);
+    expect(report.stale).toBe(1);
     expect(store.load().products.prod_1?.name).toBe("Pass");
   });
 
@@ -106,6 +107,17 @@ describe("reconcileCatalogue", () => {
     expect(store.load().prices.price_gone?.active).toBe(false);
   });
 
+  it("reports a withdrawal once, not on every later sweep", async () => {
+    const mirror = emptyMirror();
+    applyProduct(mirror, product({ id: "prod_gone" }));
+    const store = memoryStore(mirror);
+    await reconcile(fakeCatalogueApi(), store);
+
+    const report = await reconcile(fakeCatalogueApi(), store);
+
+    expect(report.changes).toEqual([]);
+  });
+
   it("counts a second sweep over the same catalogue as unchanged", async () => {
     const store = memoryStore();
     const api = fakeCatalogueApi({
@@ -116,7 +128,12 @@ describe("reconcileCatalogue", () => {
 
     const report = await reconcile(api, store);
 
-    expect(report).toEqual({ observed: { products: 1, prices: 1 }, unchanged: 2, changes: [] });
+    expect(report).toEqual({
+      observed: { products: 1, prices: 1 },
+      unchanged: 2,
+      stale: 0,
+      changes: [],
+    });
   });
 
   it("leaves the mirror untouched when a page fails part-way through", async () => {

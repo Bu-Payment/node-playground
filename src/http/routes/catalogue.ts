@@ -20,7 +20,7 @@ export function productImageRoute(context: AppContext): RequestHandler<{ product
     if (!body.success) {
       response
         .status(422)
-        .json({ code: "request_invalid", message: "imageUrl must be an http(s) URL or null." });
+        .json({ code: "image_url_invalid", message: "imageUrl must be an http(s) URL or null." });
       return;
     }
     const mirror = context.catalogue.load();
