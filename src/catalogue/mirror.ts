@@ -76,6 +76,19 @@ export function applyPrice(mirror: CatalogueMirror, remote: Price, syncedAt: str
   return outcomeOf(stored && { ...stored, syncedAt }, next);
 }
 
+export function setProductImage(
+  mirror: CatalogueMirror,
+  productId: string,
+  imageUrl: string | null,
+): boolean {
+  const product = mirror.products[productId];
+  if (product === undefined) {
+    return false;
+  }
+  product.imageUrl = imageUrl;
+  return true;
+}
+
 function isOlder(candidate: string, stored: string): boolean {
   return Date.parse(candidate) < Date.parse(stored);
 }

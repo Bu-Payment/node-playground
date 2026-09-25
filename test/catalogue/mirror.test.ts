@@ -4,6 +4,7 @@ import {
   applyProduct,
   emptyMirror,
   type MirroredProduct,
+  setProductImage,
 } from "../../src/catalogue/mirror";
 import { price, product } from "../fakes/catalogue-api";
 
@@ -128,5 +129,19 @@ describe("applyPrice", () => {
 
     expect(outcome).toBe("updated");
     expect(mirror.prices.price_1?.cachedUnitAmount).toBe(1800);
+  });
+});
+
+describe("setProductImage", () => {
+  it("sets the local-only image of a mirrored product", () => {
+    const mirror = emptyMirror();
+    applyProduct(mirror, product({ id: "prod_1" }));
+
+    expect(setProductImage(mirror, "prod_1", "https://cdn.test/t.png")).toBe(true);
+    expect(mirror.products.prod_1?.imageUrl).toBe("https://cdn.test/t.png");
+  });
+
+  it("reports a product the mirror does not hold", () => {
+    expect(setProductImage(emptyMirror(), "prod_unknown", null)).toBe(false);
   });
 });
