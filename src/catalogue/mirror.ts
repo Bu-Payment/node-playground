@@ -39,7 +39,7 @@ export function emptyMirror(): CatalogueMirror {
 }
 
 export function applyProduct(mirror: CatalogueMirror, remote: Product): ApplyOutcome {
-  const stored = mirror.products[remote.id];
+  const stored = ownRow(mirror.products, remote.id);
   if (stored !== undefined && isOlder(remote.updatedAt, stored.updatedAt)) {
     return "stale";
   }
@@ -51,12 +51,12 @@ export function applyProduct(mirror: CatalogueMirror, remote: Product): ApplyOut
     updatedAt: remote.updatedAt,
     imageUrl: stored?.imageUrl ?? null,
   };
-  mirror.products[remote.id] = next;
+  storeRow(mirror.products, remote.id, next);
   return outcomeOf(stored, next);
 }
 
 export function applyPrice(mirror: CatalogueMirror, remote: Price, syncedAt: string): ApplyOutcome {
-  const stored = mirror.prices[remote.id];
+  const stored = ownRow(mirror.prices, remote.id);
   if (stored !== undefined && isOlder(remote.updatedAt, stored.updatedAt)) {
     return "stale";
   }
@@ -72,7 +72,7 @@ export function applyPrice(mirror: CatalogueMirror, remote: Price, syncedAt: str
     updatedAt: remote.updatedAt,
     syncedAt,
   };
-  mirror.prices[remote.id] = next;
+  storeRow(mirror.prices, remote.id, next);
   return outcomeOf(stored && { ...stored, syncedAt }, next);
 }
 
@@ -81,7 +81,7 @@ export function setProductImage(
   productId: string,
   imageUrl: string | null,
 ): boolean {
-  const product = mirror.products[productId];
+  const product = ownRow(mirror.products, productId);
   if (product === undefined) {
     return false;
   }
@@ -89,8 +89,22 @@ export function setProductImage(
   return true;
 }
 
+function ownRow<T>(rows: Record<string, T>, id: string): T | undefined {
+  return Object.hasOwn(rows, id) ? rows[id] : undefined;
+}
+
+function storeRow<T>(rows: Record<string, T>, id: string, row: T): void {
+  Object.defineProperty(rows, id, {
+    value: row,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 function isOlder(candidate: string, stored: string): boolean {
-  return Date.parse(candidate) < Date.parse(stored);
+  const candidateTime = Date.parse(candidate);
+  return Number.isNaN(candidateTime) || candidateTime < Date.parse(stored);
 }
 
 function outcomeOf<T extends object>(stored: T | undefined, next: T): ApplyOutcome {

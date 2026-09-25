@@ -60,6 +60,40 @@ describe("applyProduct", () => {
     expect(outcome).toBe("stale");
     expect(mirror.products.prod_1).toMatchObject({ name: "Pass", active: true, updatedAt: LATE });
   });
+
+  it("compares instants rather than strings across offsets", () => {
+    const mirror = emptyMirror();
+    applyProduct(
+      mirror,
+      product({ id: "prod_1", name: "Pass", updatedAt: "2026-09-02T01:00:00+02:00" }),
+    );
+
+    const outcome = applyProduct(
+      mirror,
+      product({ id: "prod_1", name: "Ticket", updatedAt: "2026-09-01T23:30:00Z" }),
+    );
+
+    expect(outcome).toBe("updated");
+    expect(mirror.products.prod_1?.name).toBe("Ticket");
+  });
+
+  it("discards a version whose updatedAt cannot be read", () => {
+    const mirror = emptyMirror();
+    applyProduct(mirror, product({ id: "prod_1", name: "Pass" }));
+
+    expect(applyProduct(mirror, product({ id: "prod_1", updatedAt: "not a date" }))).toBe("stale");
+    expect(mirror.products.prod_1?.name).toBe("Pass");
+  });
+
+  it("stores an id shaped like an object key as an ordinary row", () => {
+    const mirror = emptyMirror();
+
+    applyProduct(mirror, product({ id: "__proto__", name: "Odd" }));
+
+    expect(Object.hasOwn(mirror.products, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(mirror.products)).toBe(Object.prototype);
+    expect(applyProduct(mirror, product({ id: "__proto__", name: "Odd" }))).toBe("unchanged");
+  });
 });
 
 describe("applyPrice", () => {
