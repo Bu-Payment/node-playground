@@ -3,6 +3,7 @@ import { ConfigurationError } from "./errors";
 
 export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_PORT = 9003;
+export const DEFAULT_CATALOGUE_STORE_PATH = "var/catalogue.json";
 
 const EnvSchema = z.object({
   BUPAYMENT_APP_ID: z.string().trim().min(1),
@@ -11,6 +12,7 @@ const EnvSchema = z.object({
   BUPAYMENT_API_BASE_URL: z.string().trim().min(1),
   HOST: z.string().trim().min(1).default(DEFAULT_HOST),
   PORT: z.coerce.number().int().min(1).max(65535).default(DEFAULT_PORT),
+  CATALOGUE_STORE_PATH: z.string().trim().min(1).default(DEFAULT_CATALOGUE_STORE_PATH),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
