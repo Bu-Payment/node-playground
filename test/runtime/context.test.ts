@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
-import { emptyMirror } from "../../src/catalogue/mirror";
+import { emptyCatalogue } from "../../src/catalogue/merchant";
 import { createContext } from "../../src/runtime/context";
 import { parseEnv } from "../../src/runtime/env";
 import { createLogger } from "../../src/runtime/logger";
@@ -25,7 +25,7 @@ describe("createContext", () => {
     expect(context.bupayment.environment).toBe("test");
   });
 
-  it("keeps the catalogue mirror at the configured path", () => {
+  it("keeps the merchant catalogue at the configured path", () => {
     const directory = mkdtempSync(join(tmpdir(), "playground-context-"));
     const path = join(directory, "catalogue.json");
     const context = createContext(
@@ -33,7 +33,7 @@ describe("createContext", () => {
       createLogger(),
     );
 
-    context.catalogue.save(emptyMirror());
+    context.catalogue.save(emptyCatalogue());
 
     expect(existsSync(path)).toBe(true);
     rmSync(directory, { recursive: true, force: true });

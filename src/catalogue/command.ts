@@ -20,19 +20,22 @@ export async function runReconciliation(
   try {
     const report = await reconcileCatalogue(context.bupayment.catalogue, context.catalogue);
     for (const change of report.changes) {
-      logger.info("Catalogue drift repaired", { ...change });
+      logger.info("Catalogue link reconciled", { ...change });
+    }
+    for (const productId of report.unlinked) {
+      logger.info("BuPayment product not linked to any local product", { productId });
     }
     logger.info("Catalogue reconciled", {
       products: report.observed.products,
       prices: report.observed.prices,
       changed: report.changes.length,
-      unchanged: report.unchanged,
-      stale: report.stale,
+      inSync: report.inSync,
+      unlinked: report.unlinked.length,
     });
     return 0;
   } catch (error) {
     const failure = describeFailure(error);
-    logger.error("Catalogue reconciliation failed, local mirror left untouched", {
+    logger.error("Catalogue reconciliation failed, local catalogue left untouched", {
       code: failure.code,
       status: failure.status,
     });

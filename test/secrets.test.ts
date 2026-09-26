@@ -5,8 +5,11 @@ import { type FetchLike, Header } from "@bu-payment/node-sdk";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { runReconciliation } from "../src/catalogue/command";
+import { emptyCatalogue, putProduct } from "../src/catalogue/merchant";
+import { memoryStore } from "../src/catalogue/store";
 import { createApp } from "../src/http/app";
 import { fakeCatalogueApi, product } from "./fakes/catalogue-api";
+import { link, merchantProduct } from "./fakes/merchant";
 import { FAKE_SECRET, testContext, testLogger, VALID_ENV } from "./fixtures";
 
 const directories: string[] = [];
@@ -74,15 +77,39 @@ describe("the confidential secret", () => {
     expect(lines.join("\n")).not.toContain(FAKE_SECRET);
   });
 
+  it.each(
+    Object.entries(leakingFailures),
+  )("stays out of the storefront when a live price read fails with %s", async (_, fetch) => {
+    const catalogue = emptyCatalogue();
+    putProduct(
+      catalogue,
+      merchantProduct({
+        sku: "PASS",
+        pricing: { mode: "live", lastKnown: null },
+        bupayment: link(),
+      }),
+    );
+    const { context, lines } = testContext({}, { fetch });
+    const app = createApp({ ...context, catalogue: memoryStore(catalogue) });
+
+    const response = await request(app).get("/catalogue");
+
+    expect(response.status).toBe(200);
+    expect(response.text).not.toContain(FAKE_SECRET);
+    expect(lines.join("\n")).not.toContain(FAKE_SECRET);
+  });
+
   it("stays out of the log and the responses of every catalogue route", async () => {
     const { context, lines } = testContext();
     const app = createApp(context);
 
     const responses = await Promise.all([
       request(app).get("/catalogue"),
-      request(app).put("/catalogue/products/prod_1/image").send({ imageUrl: FAKE_SECRET }),
-      request(app).put(`/catalogue/products/${FAKE_SECRET}/image`).send({ imageUrl: null }),
-      request(app).post("/catalogue").set("Content-Type", "application/json").send("{"),
+      request(app).post("/products").send({ sku: FAKE_SECRET, title: FAKE_SECRET }),
+      request(app)
+        .put(`/products/${FAKE_SECRET}/link`)
+        .send({ productId: FAKE_SECRET, priceId: FAKE_SECRET, pricing: "stored" }),
+      request(app).post("/products").set("Content-Type", "application/json").send("{"),
     ]);
 
     expect(responses.map((response) => response.text).join("\n")).not.toContain(FAKE_SECRET);

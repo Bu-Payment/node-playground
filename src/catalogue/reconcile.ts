@@ -1,20 +1,18 @@
-import type { CatalogueClient, Price, Product } from "@bu-payment/node-sdk";
-import { type ApplyOutcome, applyPrice, applyProduct, type CatalogueMirror } from "./mirror";
+import type { CatalogueClient } from "@bu-payment/node-sdk";
+import { indexRemote, type LinkOutcome, syncLink } from "./link-sync";
+import { putProduct } from "./merchant";
 import type { CatalogueStore } from "./store";
 
-export type ChangeKind = "created" | "updated" | "withdrawn";
-
-export interface CatalogueChange {
-  resource: "product" | "price";
-  id: string;
-  change: ChangeKind;
+export interface LinkChange {
+  sku: string;
+  outcome: Exclude<LinkOutcome, "in_sync">;
 }
 
 export interface ReconcileReport {
   observed: { products: number; prices: number };
-  unchanged: number;
-  stale: number;
-  changes: CatalogueChange[];
+  inSync: number;
+  changes: LinkChange[];
+  unlinked: string[];
 }
 
 export async function reconcileCatalogue(
@@ -30,29 +28,33 @@ export async function reconcileCatalogue(
     catalogue.prices().active(true).all(),
     catalogue.prices().active(false).all(),
   ]);
-  const syncedAt = now().toISOString();
-  const mirror = store.load();
+  const remote = indexRemote(products, prices);
+  const readAt = now().toISOString();
+  const local = store.load();
   const report: ReconcileReport = {
     observed: { products: products.length, prices: prices.length },
-    unchanged: 0,
-    stale: 0,
+    inSync: 0,
     changes: [],
+    unlinked: [],
   };
-  const record = (resource: CatalogueChange["resource"], id: string, outcome: ApplyOutcome) => {
-    if (outcome === "unchanged" || outcome === "stale") {
-      report[outcome] += 1;
-      return;
+  const linked = new Set<string>();
+  for (const product of Object.values(local.products)) {
+    if (product.bupayment === null) {
+      continue;
     }
-    report.changes.push({ resource, id, change: outcome });
-  };
-  for (const product of products) {
-    record("product", product.id, applyProduct(mirror, product));
+    linked.add(product.bupayment.productId);
+    const result = syncLink(product, remote, readAt);
+    putProduct(local, result.product);
+    if (result.outcome === "in_sync") {
+      report.inSync += 1;
+      continue;
+    }
+    report.changes.push({ sku: product.sku, outcome: result.outcome });
   }
-  for (const price of prices) {
-    record("price", price.id, applyPrice(mirror, price, syncedAt));
-  }
-  report.changes.push(...withdraw(mirror, products, prices));
-  store.save(mirror);
+  report.unlinked = [...remote.products.values()]
+    .filter((product) => product.active && !linked.has(product.id))
+    .map((product) => product.id);
+  store.save(local);
   return report;
 }
 
@@ -64,27 +66,4 @@ async function collect<T>(walks: AsyncGenerator<T, void, undefined>[]): Promise<
     }
   }
   return items;
-}
-
-function withdraw(
-  mirror: CatalogueMirror,
-  products: readonly Product[],
-  prices: readonly Price[],
-): CatalogueChange[] {
-  const seenProducts = new Set(products.map((product) => product.id));
-  const seenPrices = new Set(prices.map((price) => price.id));
-  const changes: CatalogueChange[] = [];
-  for (const product of Object.values(mirror.products)) {
-    if (product.active && !seenProducts.has(product.bupaymentProductId)) {
-      product.active = false;
-      changes.push({ resource: "product", id: product.bupaymentProductId, change: "withdrawn" });
-    }
-  }
-  for (const price of Object.values(mirror.prices)) {
-    if (price.active && !seenPrices.has(price.bupaymentPriceId)) {
-      price.active = false;
-      changes.push({ resource: "price", id: price.bupaymentPriceId, change: "withdrawn" });
-    }
-  }
-  return changes;
 }

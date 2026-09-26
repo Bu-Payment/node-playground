@@ -18,6 +18,14 @@ export function fakeCatalogueApi(
     fetch: async (input, init) => {
       const url = new URL(input);
       api.requests.push({ url, headers: { ...(init.headers as Record<string, string>) } });
+      const single = /^\/v1\/(products|prices)\/([^/]+)$/.exec(url.pathname);
+      if (single !== null) {
+        const pool: { id: string }[] = single[1] === "products" ? api.products : api.prices;
+        const found = pool.find((row) => row.id === decodeURIComponent(single[2] ?? ""));
+        return found === undefined
+          ? Response.json({ error: "resource_not_found", message: "Not found" }, { status: 404 })
+          : Response.json(found);
+      }
       const rows = url.pathname === "/v1/products" ? api.products : api.prices;
       const active = url.searchParams.get("active") !== "false";
       const matching = rows.filter((row) => row.active === active);

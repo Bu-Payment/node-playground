@@ -1,19 +1,26 @@
 import { BuPaymentError } from "@bu-payment/node-sdk";
 import { describe, expect, it } from "vitest";
-import { applyPrice, applyProduct, emptyMirror } from "../../src/catalogue/mirror";
+import { emptyCatalogue, putProduct } from "../../src/catalogue/merchant";
 import { reconcileCatalogue } from "../../src/catalogue/reconcile";
 import { memoryStore } from "../../src/catalogue/store";
 import { type CatalogueApi, fakeCatalogueApi, price, product } from "../fakes/catalogue-api";
+import { link, merchantProduct } from "../fakes/merchant";
 import { testContext } from "../fixtures";
 
-const SWEPT_AT = new Date("2026-09-24T12:00:00.000Z");
-
-function catalogueOf(api: CatalogueApi) {
-  return testContext({}, { fetch: api.fetch }).context.bupayment.catalogue;
-}
+const SWEPT_AT = new Date("2026-09-26T12:00:00.000Z");
+const LATER = "2026-09-20T00:00:00.000Z";
 
 function reconcile(api: CatalogueApi, store = memoryStore()) {
-  return reconcileCatalogue(catalogueOf(api), store, () => SWEPT_AT);
+  const client = testContext({}, { fetch: api.fetch }).context.bupayment.catalogue;
+  return reconcileCatalogue(client, store, () => SWEPT_AT);
+}
+
+function storeWith(...products: ReturnType<typeof merchantProduct>[]) {
+  const catalogue = emptyCatalogue();
+  for (const entry of products) {
+    putProduct(catalogue, entry);
+  }
+  return memoryStore(catalogue);
 }
 
 describe("reconcileCatalogue", () => {
@@ -22,19 +29,10 @@ describe("reconcileCatalogue", () => {
       products: [1, 2, 3, 4, 5, 6].map((n) => product({ id: `prod_${n}`, active: n !== 6 })),
       prices: [price({ id: "price_1", productId: "prod_1" })],
     });
-    const store = memoryStore();
 
-    const report = await reconcile(api, store);
+    const report = await reconcile(api);
 
     expect(report.observed).toEqual({ products: 6, prices: 1 });
-    expect(Object.keys(store.load().products).sort()).toEqual([
-      "prod_1",
-      "prod_2",
-      "prod_3",
-      "prod_4",
-      "prod_5",
-      "prod_6",
-    ]);
     expect(
       api.requests.map((request) => `${request.url.pathname}?${request.url.searchParams}`),
     ).toEqual([
@@ -47,101 +45,67 @@ describe("reconcileCatalogue", () => {
     ]);
   });
 
-  it("observes an archived product and deactivates it locally", async () => {
-    const store = memoryStore();
-    const api = fakeCatalogueApi({ products: [product({ id: "prod_1" })] });
-    await reconcile(api, store);
-    api.products = [product({ id: "prod_1", active: false, updatedAt: "2026-09-20T00:00:00Z" })];
-
-    const report = await reconcile(api, store);
-
-    expect(report.changes).toEqual([{ resource: "product", id: "prod_1", change: "updated" }]);
-    expect(store.load().products.prod_1?.active).toBe(false);
-  });
-
-  it("repairs a local value that drifted from BuPayment", async () => {
-    const mirror = emptyMirror();
-    applyPrice(mirror, price({ id: "price_1", productId: "prod_1", unitAmount: 1 }), "2026-01-01");
-    const store = memoryStore(mirror);
-
-    const report = await reconcile(
-      fakeCatalogueApi({ prices: [price({ id: "price_1", productId: "prod_1" })] }),
-      store,
-    );
-
-    expect(report.changes).toEqual([{ resource: "price", id: "price_1", change: "updated" }]);
-    expect(store.load().prices.price_1).toMatchObject({
-      cachedUnitAmount: 1500,
-      syncedAt: SWEPT_AT.toISOString(),
-    });
-  });
-
-  it("keeps a newer local observation over an older read", async () => {
-    const mirror = emptyMirror();
-    applyProduct(mirror, product({ id: "prod_1", name: "Pass", updatedAt: "2026-09-30T00:00Z" }));
-    const store = memoryStore(mirror);
-
-    const report = await reconcile(
-      fakeCatalogueApi({ products: [product({ id: "prod_1", name: "Ticket" })] }),
-      store,
-    );
-
-    expect(report.changes).toEqual([]);
-    expect(report.stale).toBe(1);
-    expect(store.load().products.prod_1?.name).toBe("Pass");
-  });
-
-  it("withdraws what this application can no longer see at all", async () => {
-    const mirror = emptyMirror();
-    applyProduct(mirror, product({ id: "prod_gone" }));
-    applyPrice(mirror, price({ id: "price_gone", productId: "prod_gone" }), "2026-09-01");
-    const store = memoryStore(mirror);
-
-    const report = await reconcile(fakeCatalogueApi(), store);
-
-    expect(report.changes).toEqual([
-      { resource: "product", id: "prod_gone", change: "withdrawn" },
-      { resource: "price", id: "price_gone", change: "withdrawn" },
-    ]);
-    expect(store.load().products.prod_gone?.active).toBe(false);
-    expect(store.load().prices.price_gone?.active).toBe(false);
-  });
-
-  it("reports a withdrawal once, not on every later sweep", async () => {
-    const mirror = emptyMirror();
-    applyProduct(mirror, product({ id: "prod_gone" }));
-    const store = memoryStore(mirror);
-    await reconcile(fakeCatalogueApi(), store);
-
-    const report = await reconcile(fakeCatalogueApi(), store);
-
-    expect(report.changes).toEqual([]);
-  });
-
-  it("counts a second sweep over the same catalogue as unchanged", async () => {
-    const store = memoryStore();
+  it("observes an archived product through the inactive pass", async () => {
+    const store = storeWith(merchantProduct({ sku: "TICKET", bupayment: link() }));
     const api = fakeCatalogueApi({
-      products: [product({ id: "prod_1" })],
+      products: [product({ id: "prod_1", active: false, updatedAt: LATER })],
       prices: [price({ id: "price_1", productId: "prod_1" })],
     });
-    await reconcile(api, store);
 
     const report = await reconcile(api, store);
 
-    expect(report).toEqual({
-      observed: { products: 1, prices: 1 },
-      unchanged: 2,
-      stale: 0,
-      changes: [],
-    });
+    expect(report.changes).toEqual([{ sku: "TICKET", outcome: "archived" }]);
+    expect(store.load().products.TICKET?.bupayment?.sellable).toBe(false);
   });
 
-  it("leaves the mirror untouched when a page fails part-way through", async () => {
-    const mirror = emptyMirror();
-    applyProduct(mirror, product({ id: "prod_1", name: "Ticket" }));
-    const store = memoryStore(mirror);
+  it("pulls a changed stored price and counts the rest as in sync", async () => {
+    const store = storeWith(
+      merchantProduct({ sku: "TICKET", bupayment: link() }),
+      merchantProduct({
+        sku: "PASS",
+        bupayment: link({ productId: "prod_2", priceId: "price_2" }),
+      }),
+      merchantProduct({ sku: "LOCAL" }),
+    );
     const api = fakeCatalogueApi({
-      products: [product({ id: "prod_1", name: "Pass", updatedAt: "2026-09-20T00:00Z" })],
+      products: [product({ id: "prod_1" }), product({ id: "prod_2" })],
+      prices: [
+        price({ id: "price_1", productId: "prod_1", unitAmount: 1800, updatedAt: LATER }),
+        price({ id: "price_2", productId: "prod_2" }),
+      ],
+    });
+
+    const report = await reconcile(api, store);
+
+    expect(report.changes).toEqual([{ sku: "TICKET", outcome: "updated" }]);
+    expect(report.inSync).toBe(1);
+    expect(store.load().products.TICKET?.pricing).toEqual({
+      mode: "stored",
+      amount: 1800,
+      currency: "EUR",
+    });
+    expect(store.load().products.LOCAL?.bupayment).toBeNull();
+  });
+
+  it("lists active BuPayment products no local product links to", async () => {
+    const store = storeWith(merchantProduct({ sku: "TICKET", bupayment: link() }));
+    const api = fakeCatalogueApi({
+      products: [
+        product({ id: "prod_1" }),
+        product({ id: "prod_new" }),
+        product({ id: "prod_old", active: false }),
+      ],
+      prices: [price({ id: "price_1", productId: "prod_1" })],
+    });
+
+    expect((await reconcile(api, store)).unlinked).toEqual(["prod_new"]);
+  });
+
+  it("leaves the catalogue untouched when a page fails part-way through", async () => {
+    const store = storeWith(merchantProduct({ sku: "TICKET", bupayment: link() }));
+    const before = store.load();
+    const api = fakeCatalogueApi({
+      products: [product({ id: "prod_1", active: false, updatedAt: LATER })],
     });
     const failing: CatalogueApi = {
       ...api,
@@ -152,6 +116,6 @@ describe("reconcileCatalogue", () => {
     };
 
     await expect(reconcile(failing, store)).rejects.toBeInstanceOf(BuPaymentError);
-    expect(store.load()).toEqual(mirror);
+    expect(store.load()).toEqual(before);
   });
 });

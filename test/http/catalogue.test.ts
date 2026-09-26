@@ -1,163 +1,236 @@
+import type { FetchLike } from "@bu-payment/node-sdk";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
-import { applyPrice, applyProduct, emptyMirror, setProductImage } from "../../src/catalogue/mirror";
+import { emptyCatalogue, type MerchantProduct, putProduct } from "../../src/catalogue/merchant";
 import { memoryStore } from "../../src/catalogue/store";
 import { createApp } from "../../src/http/app";
-import { price, product, unreachableApi } from "../fakes/catalogue-api";
+import { fakeCatalogueApi, price, product, unreachableApi } from "../fakes/catalogue-api";
+import { link, merchantProduct } from "../fakes/merchant";
 import { testContext } from "../fixtures";
 
-function mirroredApp() {
-  const mirror = emptyMirror();
-  applyProduct(mirror, product({ id: "prod_ticket", name: "Ticket" }));
-  applyProduct(mirror, product({ id: "prod_archived", name: "Archived", active: false }));
-  applyPrice(
-    mirror,
-    price({ id: "price_ticket", productId: "prod_ticket", unitAmount: 1500 }),
-    "2026-09-24T12:00:00.000Z",
-  );
-  applyPrice(
-    mirror,
-    price({ id: "price_old", productId: "prod_ticket", active: false }),
-    "2026-09-24T12:00:00.000Z",
-  );
-  const { context } = testContext({}, { fetch: unreachableApi() });
-  const store = memoryStore(mirror);
+function appWith(products: MerchantProduct[], fetch: FetchLike = unreachableApi()) {
+  const catalogue = emptyCatalogue();
+  for (const entry of products) {
+    putProduct(catalogue, entry);
+  }
+  const store = memoryStore(catalogue);
+  const { context } = testContext({}, { fetch });
   return { app: createApp({ ...context, catalogue: store }), store };
 }
 
+const LIVE = merchantProduct({
+  sku: "PASS",
+  title: "Pass",
+  pricing: {
+    mode: "live",
+    lastKnown: { amount: 900, currency: "EUR", readAt: "2026-09-01T00:00:00Z" },
+  },
+  bupayment: link(),
+});
+
 describe("GET /catalogue", () => {
-  it("serves the storefront from the mirror while BuPayment is unreachable", async () => {
-    const { app } = mirroredApp();
+  it("serves stored prices and the merchant's own fields with BuPayment unreachable", async () => {
+    const { app } = appWith([
+      merchantProduct({
+        sku: "TICKET",
+        title: "Ticket",
+        imageUrl: "https://cdn.example.test/t.png",
+        bupayment: link(),
+      }),
+      merchantProduct({ sku: "LOCAL", title: "Local only" }),
+    ]);
 
     const response = await request(app).get("/catalogue");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({
-      products: [
-        {
-          id: "prod_ticket",
-          name: "Ticket",
-          description: null,
-          imageUrl: null,
-          prices: [
-            {
-              id: "price_ticket",
-              type: "one_time",
-              interval: null,
-              intervalCount: null,
-              display: {
-                unitAmount: 1500,
-                currency: "EUR",
-                syncedAt: "2026-09-24T12:00:00.000Z",
-              },
-            },
-          ],
-        },
-      ],
+    expect(response.body.products).toEqual([
+      {
+        sku: "LOCAL",
+        title: "Local only",
+        slug: "local",
+        imageUrl: null,
+        stock: 10,
+        price: { amount: 1500, currency: "EUR", source: "stored", readAt: null },
+        sellable: false,
+      },
+      {
+        sku: "TICKET",
+        title: "Ticket",
+        slug: "ticket",
+        imageUrl: "https://cdn.example.test/t.png",
+        stock: 10,
+        price: { amount: 1500, currency: "EUR", source: "stored", readAt: null },
+        sellable: true,
+      },
+    ]);
+  });
+
+  it("reads a live price from BuPayment and remembers it", async () => {
+    const api = fakeCatalogueApi({
+      prices: [price({ id: "price_1", productId: "prod_1", unitAmount: 1200 })],
+    });
+    const { app, store } = appWith([LIVE], api.fetch);
+
+    const response = await request(app).get("/catalogue");
+
+    expect(response.body.products[0].price).toEqual({
+      amount: 1200,
+      currency: "EUR",
+      source: "live",
+      readAt: null,
+    });
+    expect(store.load().products.PASS?.pricing).toMatchObject({
+      mode: "live",
+      lastKnown: { amount: 1200, currency: "EUR" },
     });
   });
 
-  it("shows the local image and only the prices of each product", async () => {
-    const mirror = emptyMirror();
-    applyProduct(mirror, product({ id: "prod_a", name: "Alpha" }));
-    applyProduct(mirror, product({ id: "prod_b", name: "Bravo" }));
-    applyPrice(mirror, price({ id: "price_a", productId: "prod_a" }), "2026-09-24T12:00:00Z");
-    applyPrice(mirror, price({ id: "price_b", productId: "prod_b" }), "2026-09-24T12:00:00Z");
-    setProductImage(mirror, "prod_a", "https://cdn.example.test/a.png");
-    const { context } = testContext({}, { fetch: unreachableApi() });
+  it("falls back to the last known live price when BuPayment is unreachable", async () => {
+    const { app } = appWith([LIVE]);
 
-    const response = await request(createApp({ ...context, catalogue: memoryStore(mirror) })).get(
-      "/catalogue",
-    );
+    const response = await request(app).get("/catalogue");
 
-    expect(
-      response.body.products.map((row: { imageUrl: string | null; prices: { id: string }[] }) => [
-        row.imageUrl,
-        row.prices.map((entry) => entry.id),
-      ]),
-    ).toEqual([
-      ["https://cdn.example.test/a.png", ["price_a"]],
-      [null, ["price_b"]],
-    ]);
+    expect(response.status).toBe(200);
+    expect(response.body.products[0].price).toEqual({
+      amount: 900,
+      currency: "EUR",
+      source: "last_known",
+      readAt: "2026-09-01T00:00:00Z",
+    });
   });
 
-  it("orders products by name", async () => {
-    const mirror = emptyMirror();
-    applyProduct(mirror, product({ id: "prod_b", name: "Bravo" }));
-    applyProduct(mirror, product({ id: "prod_a", name: "Alpha" }));
-    const { context } = testContext();
+  it("shows no price for a live product never read and BuPayment unreachable", async () => {
+    const { app } = appWith([{ ...LIVE, pricing: { mode: "live", lastKnown: null } }]);
 
-    const response = await request(createApp({ ...context, catalogue: memoryStore(mirror) })).get(
-      "/catalogue",
-    );
-
-    expect(response.body.products.map((row: { name: string }) => row.name)).toEqual([
-      "Alpha",
-      "Bravo",
-    ]);
+    expect((await request(app).get("/catalogue")).body.products[0].price).toBeNull();
   });
 });
 
-describe("PUT /catalogue/products/:productId/image", () => {
-  it("stores a local-only image on a mirrored product", async () => {
-    const { app, store } = mirroredApp();
+describe("POST /products", () => {
+  const body = {
+    sku: "TICKET",
+    title: "Ferry ticket",
+    slug: "ferry-ticket",
+    stock: 5,
+    price: { amount: 1500, currency: "EUR" },
+  };
 
-    const response = await request(app)
-      .put("/catalogue/products/prod_ticket/image")
-      .send({ imageUrl: "https://cdn.example.test/ticket.png" });
+  it("creates an unlinked product with a local price", async () => {
+    const { app, store } = appWith([]);
 
-    expect(response.status).toBe(204);
-    expect(store.load().products.prod_ticket?.imageUrl).toBe("https://cdn.example.test/ticket.png");
+    const response = await request(app).post("/products").send(body);
+
+    expect(response.status).toBe(201);
+    expect(store.load().products.TICKET).toEqual({
+      sku: "TICKET",
+      title: "Ferry ticket",
+      slug: "ferry-ticket",
+      imageUrl: null,
+      stock: 5,
+      pricing: { mode: "stored", amount: 1500, currency: "EUR" },
+      bupayment: null,
+    });
   });
 
-  it("clears the image with null", async () => {
-    const { app, store } = mirroredApp();
-    await request(app)
-      .put("/catalogue/products/prod_ticket/image")
-      .send({ imageUrl: "https://cdn.example.test/ticket.png" });
+  it("refuses a SKU that already exists", async () => {
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })]);
 
-    await request(app).put("/catalogue/products/prod_ticket/image").send({ imageUrl: null });
+    const response = await request(app).post("/products").send(body);
 
-    expect(store.load().products.prod_ticket?.imageUrl).toBeNull();
-  });
-
-  it.each([
-    "__proto__",
-    "constructor",
-    "toString",
-  ])("treats %s as an unknown product rather than an object key", async (productId) => {
-    const { app } = mirroredApp();
-
-    const response = await request(app)
-      .put(`/catalogue/products/${productId}/image`)
-      .send({ imageUrl: "https://evil.example.test/x.png" });
-
-    expect(response.status).toBe(404);
-    expect(({} as { imageUrl?: unknown }).imageUrl).toBeUndefined();
-  });
-
-  it("refuses a product the mirror does not hold", async () => {
-    const { app } = mirroredApp();
-
-    const response = await request(app)
-      .put("/catalogue/products/prod_unknown/image")
-      .send({ imageUrl: "https://cdn.example.test/x.png" });
-
-    expect(response.status).toBe(404);
-    expect(response.body.code).toBe("product_not_mirrored");
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe("product_exists");
   });
 
   it.each([
-    { imageUrl: "javascript:alert(1)" },
-    { imageUrl: 42 },
-    {},
-  ])("refuses %o as an image", async (body) => {
-    const { app, store } = mirroredApp();
+    { ...body, sku: "has space" },
+    { ...body, imageUrl: "javascript:alert(1)" },
+    { ...body, price: { amount: -1, currency: "EUR" } },
+    { ...body, price: { amount: 1, currency: "eur" } },
+  ])("refuses %o", async (invalid) => {
+    const { app, store } = appWith([]);
 
-    const response = await request(app).put("/catalogue/products/prod_ticket/image").send(body);
+    const response = await request(app).post("/products").send(invalid);
 
     expect(response.status).toBe(422);
-    expect(response.body.code).toBe("image_url_invalid");
-    expect(store.load().products.prod_ticket?.imageUrl).toBeNull();
+    expect(response.body.code).toBe("product_invalid");
+    expect(store.load().products).toEqual({});
+  });
+});
+
+describe("PUT /products/:sku/link", () => {
+  const api = () =>
+    fakeCatalogueApi({
+      products: [product({ id: "prod_1" }), product({ id: "prod_2" })],
+      prices: [price({ id: "price_1", productId: "prod_1", unitAmount: 1800 })],
+    });
+
+  it("links a local product to a BuPayment product and price", async () => {
+    const { app, store } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+
+    const response = await request(app)
+      .put("/products/TICKET/link")
+      .send({ productId: "prod_1", priceId: "price_1", pricing: "stored" });
+
+    expect(response.status).toBe(200);
+    expect(store.load().products.TICKET?.bupayment?.priceId).toBe("price_1");
+  });
+
+  it.each(["__proto__", "UNKNOWN"])("answers 404 for the local SKU %s", async (sku) => {
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+
+    const response = await request(app)
+      .put(`/products/${sku}/link`)
+      .send({ productId: "prod_1", priceId: "price_1", pricing: "stored" });
+
+    expect(response.status).toBe(404);
+    expect(response.body.code).toBe("product_not_found");
+  });
+
+  it("refuses a price of another product", async () => {
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+
+    const response = await request(app)
+      .put("/products/TICKET/link")
+      .send({ productId: "prod_2", priceId: "price_1", pricing: "stored" });
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe("price_not_of_product");
+  });
+
+  it("refuses an archived BuPayment price", async () => {
+    const archived = fakeCatalogueApi({
+      products: [product({ id: "prod_1" })],
+      prices: [price({ id: "price_1", productId: "prod_1", active: false })],
+    });
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })], archived.fetch);
+
+    const response = await request(app)
+      .put("/products/TICKET/link")
+      .send({ productId: "prod_1", priceId: "price_1", pricing: "live" });
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe("inactive");
+  });
+
+  it("refuses a malformed link request", async () => {
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+
+    const response = await request(app)
+      .put("/products/TICKET/link")
+      .send({ productId: "prod_1", priceId: "price_1", pricing: "cached" });
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe("link_invalid");
+  });
+
+  it("maps a BuPayment 404 to the canonical SDK failure", async () => {
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+
+    const response = await request(app)
+      .put("/products/TICKET/link")
+      .send({ productId: "prod_missing", priceId: "price_1", pricing: "stored" });
+
+    expect(response.status).toBe(404);
+    expect(response.body.code).toBe("resource_not_found");
   });
 });
