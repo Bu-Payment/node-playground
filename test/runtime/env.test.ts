@@ -52,6 +52,23 @@ describe("parseEnv", () => {
     expect(call).toThrow(/PORT is invalid/);
   });
 
+  it("treats a blank optional variable as absent", () => {
+    const env = parseEnv({
+      ...VALID_ENV,
+      HOST: "",
+      PORT: " ",
+      CATALOGUE_STORE_PATH: "",
+      BUPAYMENT_WEBHOOK_SECRET: "",
+    });
+
+    expect(env).toMatchObject({
+      HOST: DEFAULT_HOST,
+      PORT: DEFAULT_PORT,
+      CATALOGUE_STORE_PATH: DEFAULT_CATALOGUE_STORE_PATH,
+    });
+    expect(env.BUPAYMENT_WEBHOOK_SECRET).toBeUndefined();
+  });
+
   it("treats the webhook endpoint secret as optional", () => {
     expect(parseEnv(VALID_ENV).BUPAYMENT_WEBHOOK_SECRET).toBeUndefined();
     expect(

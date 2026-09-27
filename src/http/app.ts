@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import type { AppContext } from "../runtime/context";
 import { errorHandler, notFoundHandler } from "./error-handler";
+import { localHostsOnly } from "./host-guard";
 import {
   catalogueRoute,
   changePriceRoute,
@@ -18,6 +19,7 @@ export function createApp(context: AppContext): Express {
     express.raw({ type: "application/json", limit: "256kb" }),
     webhookRoute(context),
   );
+  app.use(localHostsOnly(context.server.host));
   app.use(express.json({ limit: "64kb" }));
   app.get("/healthz", healthRoute(context));
   app.get("/catalogue", catalogueRoute(context));

@@ -25,7 +25,8 @@ export type Env = z.infer<typeof EnvSchema>;
 export type EnvSource = Readonly<Record<string, string | undefined>>;
 
 export function parseEnv(source: EnvSource = process.env): Env {
-  const result = EnvSchema.safeParse(source);
+  const present = Object.fromEntries(Object.entries(source).filter(([, value]) => !isBlank(value)));
+  const result = EnvSchema.safeParse(present);
   if (result.success) {
     return result.data;
   }
