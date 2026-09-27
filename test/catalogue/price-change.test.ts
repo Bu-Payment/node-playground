@@ -113,9 +113,35 @@ describe("changePrice", () => {
       "PUT /v1/products/prod_1/default-price",
       "POST /v1/prices/price_1/archive",
     ]);
+    expect(api.requests[3]?.body).toEqual({
+      priceId: "price_new_2",
+      expectedUpdatedAt: "2026-09-01T00:00:00.000Z",
+    });
+    expect(api.requests[3]?.headers[Header.IDEMPOTENCY_KEY]).toMatch(/\S/);
     expect(api.products[0]?.defaultPriceId).toBe("price_new_2");
     expect(api.prices.find((row) => row.id === "price_1")?.active).toBe(false);
     expect(store.load().products.TICKET?.bupayment?.priceId).toBe("price_new_2");
+  });
+
+  it("leaves the default in place when the product changed after it was read", async () => {
+    const api = singlePriceApi();
+    const serve = api.fetch;
+    api.fetch = async (input, init) => {
+      const response = await serve(input, init);
+      if ((init.method ?? "GET") === "POST" && new URL(input).pathname.endsWith("/prices")) {
+        Object.assign(api.products[0] ?? {}, { updatedAt: "2026-09-27T11:00:00.000Z" });
+      }
+      return response;
+    };
+    const { change } = setupPriceChange(LINKED, api);
+
+    const result = await change("TICKET", 1800);
+
+    const error = result.changed ? result.archivePending?.error : undefined;
+    expect(result.changed && result.archivePending?.outcome).toBe("default_failed");
+    expect((error as BuPaymentError).status).toBe(409);
+    expect(api.products[0]?.defaultPriceId).toBe("price_1");
+    expect(api.prices.find((row) => row.id === "price_1")?.active).toBe(true);
   });
 
   it("links the new price and reports the archive as pending when the default cannot move", async () => {

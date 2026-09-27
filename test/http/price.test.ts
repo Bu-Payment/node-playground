@@ -2,23 +2,14 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { putProduct } from "../../src/catalogue/merchant";
 import { appWith } from "../fakes/app";
-import { fakeCatalogueApi, price, product } from "../fakes/catalogue-api";
 import { link, merchantProduct } from "../fakes/merchant";
+import { singlePriceApi, twoPriceApi } from "../fakes/price-change";
 
 describe("PUT /products/:sku/price", () => {
-  const api = () =>
-    fakeCatalogueApi({
-      products: [product({ id: "prod_1", defaultPriceId: "price_0" })],
-      prices: [
-        price({ id: "price_0", productId: "prod_1", currency: "USD" }),
-        price({ id: "price_1", productId: "prod_1" }),
-      ],
-    });
-
   it("changes a linked price through BuPayment", async () => {
     const { app, store } = appWith(
       [merchantProduct({ sku: "TICKET", bupayment: link() })],
-      api().fetch,
+      twoPriceApi().fetch,
     );
 
     const response = await request(app).put("/products/TICKET/price").send({ amount: 1800 });
@@ -29,7 +20,7 @@ describe("PUT /products/:sku/price", () => {
   });
 
   it("reports and logs an archive left pending", async () => {
-    const failing = api();
+    const failing = twoPriceApi();
     failing.failArchive = true;
     const { app, lines } = appWith(
       [merchantProduct({ sku: "TICKET", bupayment: link() })],
@@ -44,16 +35,14 @@ describe("PUT /products/:sku/price", () => {
       message: "Previous BuPayment price was not archived",
       sku: "TICKET",
       previousPriceId: "price_1",
+      replacementPriceId: "price_new_3",
       outcome: "archive_failed",
       code: "operation_failed",
     });
   });
 
   it("reports and logs a default price that could not move", async () => {
-    const failing = fakeCatalogueApi({
-      products: [product({ id: "prod_1", defaultPriceId: "price_1" })],
-      prices: [price({ id: "price_1", productId: "prod_1" })],
-    });
+    const failing = singlePriceApi();
     failing.failDefaultPrice = true;
     const { app, lines } = appWith(
       [merchantProduct({ sku: "TICKET", bupayment: link() })],
@@ -63,8 +52,12 @@ describe("PUT /products/:sku/price", () => {
     const response = await request(app).put("/products/TICKET/price").send({ amount: 1800 });
 
     expect(response.body.archivePending).toBe(true);
-    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
+    expect(JSON.parse(lines[0] ?? "{}")).toEqual({
+      level: "error",
       message: "Previous BuPayment price was not archived",
+      sku: "TICKET",
+      previousPriceId: "price_1",
+      replacementPriceId: "price_new_2",
       outcome: "default_failed",
       code: "operation_failed",
     });
@@ -77,7 +70,7 @@ describe("PUT /products/:sku/price", () => {
       { level: "error", message: "Unused BuPayment price left active", code: "operation_failed" },
     ],
   ])("answers 409 and logs the unused price when the product changed meanwhile (archive fails: %s)", async (archiveFails, logged) => {
-    const fake = api();
+    const fake = twoPriceApi();
     const linked = merchantProduct({ sku: "TICKET", bupayment: link() });
     const { app, store, lines } = appWith([linked], fake.fetch);
     const load = store.load.bind(store);
@@ -104,7 +97,7 @@ describe("PUT /products/:sku/price", () => {
   });
 
   it("answers 404 for an unknown SKU", async () => {
-    const { app } = appWith([], api().fetch);
+    const { app } = appWith([], twoPriceApi().fetch);
 
     const response = await request(app).put("/products/TICKET/price").send({ amount: 1800 });
 
@@ -118,7 +111,7 @@ describe("PUT /products/:sku/price", () => {
     { amount: 1800, currency: "USD" },
     {},
   ])("refuses %o", async (body) => {
-    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })], twoPriceApi().fetch);
 
     const response = await request(app).put("/products/TICKET/price").send(body);
 
