@@ -88,7 +88,7 @@ async function replacePrice(
   amount: number,
 ): Promise<PriceChange> {
   const current: Price = await catalogue.price(link.priceId).get();
-  const draft = catalogue.createPrice(link.productId).unitAmount(amount).currency(current.currency);
+  const draft = catalogue.priceDraft(link.productId).unitAmount(amount).currency(current.currency);
   if (current.recurring === null) {
     return await draft.replacing(link.priceId).expectedUpdatedAt(link.priceUpdatedAt).replace();
   }
