@@ -70,6 +70,29 @@ describe("POST /webhooks/bupayment", () => {
     expect(store.load()).toEqual(before);
   });
 
+  it("logs a refused delivery by its code only", async () => {
+    const { app, lines } = webhookApp();
+    const delivery = signed(ARCHIVED);
+
+    await post(app, { ...delivery, body: `${delivery.body} ` });
+
+    expect(lines.map((line) => JSON.parse(line))).toEqual([
+      { level: "error", message: "Webhook delivery refused", code: "webhook_signature_invalid" },
+    ]);
+  });
+
+  it("answers 500 without applying when the delivery cannot be stored, so BuPayment retries", async () => {
+    const { app, store } = webhookApp();
+    store.save = () => {
+      throw new Error("disk full");
+    };
+
+    const response = await post(app, signed(ARCHIVED));
+
+    expect(response.status).toBe(500);
+    expect(response.body.code).toBe("internal_error");
+  });
+
   it("refuses a delivery signed with another secret", async () => {
     const { app } = webhookApp();
 

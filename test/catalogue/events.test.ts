@@ -217,6 +217,37 @@ describe("applyCatalogueEvent", () => {
     expect(result).toMatchObject({ outcome: "unrelated", needsReplacementPrice: true });
   });
 
+  it.each([
+    ["of another product", price({ id: "price_2", productId: "prod_other", updatedAt: LATER })],
+    [
+      "that is archived",
+      price({ id: "price_2", productId: "prod_1", active: false, updatedAt: LATER }),
+    ],
+  ])("does not ask for a replacement for a new price %s", (_, resource) => {
+    const waiting = merchantProduct({ sku: "TICKET", bupayment: link({ priceActive: false }) });
+
+    const result = applyCatalogueEvent(
+      waiting,
+      priceEvent("catalogue.price.created.v1", resource),
+      RECEIVED,
+    );
+
+    expect(result.needsReplacementPrice).toBe(false);
+  });
+
+  it("does not ask for a replacement for an unassigned product", () => {
+    const unassigned = merchantProduct({
+      sku: "TICKET",
+      bupayment: link({ productAssigned: false }),
+    });
+    const event = priceEvent(
+      "catalogue.price.archived.v1",
+      price({ id: "price_1", productId: "prod_1", active: false, updatedAt: LATER }),
+    );
+
+    expect(applyCatalogueEvent(unassigned, event, RECEIVED).needsReplacementPrice).toBe(false);
+  });
+
   it("does not ask for a replacement while the linked price is still usable", () => {
     const event = priceEvent(
       "catalogue.price.created.v1",

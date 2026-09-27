@@ -3,11 +3,20 @@ import {
   type CatalogueClient,
   type CatalogueEvent,
   type Price,
+  type Product,
   type VerifiedWebhookDelivery,
 } from "@bu-payment/node-sdk";
+import { collect } from "./collect";
 import { applyCatalogueEvent, defaultPriceIdOf } from "./events";
 import { indexRemote, type LinkOutcome, syncLink } from "./link-sync";
-import { defineOwnKey, findProduct, type MerchantProduct, putProduct } from "./merchant";
+import {
+  type CatalogueLink,
+  defineOwnKey,
+  findProduct,
+  type MerchantCatalogue,
+  type MerchantProduct,
+  putProduct,
+} from "./merchant";
 import { type CatalogueStore, updateProduct } from "./store";
 
 export type ReplacementOutcome = LinkOutcome | "unreachable" | "superseded";
@@ -17,6 +26,7 @@ export interface DeliveryReport {
   applied: string[];
   stale: string[];
   replacements: { sku: string; outcome: ReplacementOutcome }[];
+  unlinked: string[];
 }
 
 export async function receiveDelivery(
@@ -33,7 +43,13 @@ export async function receiveDelivery(
     Object.hasOwn(local.received.events, event.id);
   record(local.received.deliveries, delivery.deliveryId, receivedAt);
   record(local.received.events, event.id, receivedAt);
-  const report: DeliveryReport = { outcome: "applied", applied: [], stale: [], replacements: [] };
+  const report: DeliveryReport = {
+    outcome: "applied",
+    applied: [],
+    stale: [],
+    replacements: [],
+    unlinked: [],
+  };
   if (seen || event.type === "unknown") {
     store.save(local);
     return { ...report, outcome: seen ? "duplicate" : "ignored" };
@@ -52,40 +68,48 @@ export async function receiveDelivery(
       awaiting.push(product.sku);
     }
   }
+  if (event.type === "catalogue.product.assigned.v1" && !isLinked(local, event.data.resourceId)) {
+    report.unlinked.push(event.data.resourceId);
+  }
   store.save(local);
+  const reads = new Map<string, Promise<ProductReads | undefined>>();
   for (const sku of awaiting) {
     const product = findProduct(local, sku);
-    if (product !== undefined) {
-      report.replacements.push({
-        sku,
-        outcome: await replacePrice(catalogue, store, product, event, receivedAt),
-      });
+    const link = product?.bupayment ?? null;
+    if (product === undefined || link === null) {
+      continue;
     }
+    const pending = reads.get(link.productId) ?? readProduct(catalogue, link.productId);
+    reads.set(link.productId, pending);
+    report.replacements.push({
+      sku,
+      outcome: await repointAfterEvent(store, product, link, await pending, event, receivedAt),
+    });
   }
   return report;
 }
 
-async function replacePrice(
-  catalogue: CatalogueClient,
+interface ProductReads {
+  product: Product | undefined;
+  prices: Price[];
+}
+
+async function repointAfterEvent(
   store: CatalogueStore,
   product: MerchantProduct,
+  link: CatalogueLink,
+  reads: ProductReads | undefined,
   event: CatalogueEvent,
   readAt: string,
 ): Promise<ReplacementOutcome> {
-  const link = product.bupayment;
-  if (link === null) {
-    return "in_sync";
-  }
-  const reads = await readProductPrices(catalogue, link.productId, link.priceId);
   if (reads === undefined) {
     return "unreachable";
   }
-  const unassigned =
-    reads.linked === undefined ? unassignedLinkedPrice(event, link.priceId) : undefined;
-  const linked = reads.linked ?? unassigned;
+  const readable = reads.prices.some((price) => price.id === link.priceId);
+  const unassigned = readable ? undefined : unassignedLinkedPrice(event, link.priceId);
   const remote = indexRemote(
-    [reads.product],
-    linked === undefined ? reads.active : [linked, ...reads.active],
+    reads.product === undefined ? [] : [reads.product],
+    unassigned === undefined ? reads.prices : [unassigned, ...reads.prices],
   );
   const options = {
     defaultPriceId: defaultPriceIdOf(event),
@@ -111,18 +135,20 @@ function unassignedLinkedPrice(event: CatalogueEvent, linkedPriceId: string): Pr
     : undefined;
 }
 
-async function readProductPrices(
+async function readProduct(
   catalogue: CatalogueClient,
   productId: string,
-  linkedPriceId: string,
-) {
+): Promise<ProductReads | undefined> {
   try {
-    const [product, linked, active] = await Promise.all([
-      catalogue.product(productId).get(),
-      catalogue.price(linkedPriceId).get().catch(onlyNotFound),
-      collect(catalogue.prices().productId(productId).active(true).all()),
-    ]);
-    return { product, linked, active };
+    const product = await catalogue.product(productId).get().catch(onlyNotFound);
+    if (product === undefined) {
+      return { product, prices: [] };
+    }
+    const prices = await collect(
+      catalogue.prices().productId(productId).active(true).all(),
+      catalogue.prices().productId(productId).active(false).all(),
+    );
+    return { product, prices };
   } catch {
     return undefined;
   }
@@ -135,12 +161,10 @@ function onlyNotFound(error: unknown): undefined {
   throw error;
 }
 
-async function collect(walk: AsyncGenerator<Price, void, undefined>): Promise<Price[]> {
-  const prices: Price[] = [];
-  for await (const price of walk) {
-    prices.push(price);
-  }
-  return prices;
+function isLinked(catalogue: MerchantCatalogue, productId: string): boolean {
+  return Object.values(catalogue.products).some(
+    (product) => product.bupayment?.productId === productId,
+  );
 }
 
 function record(ids: Record<string, string>, id: string, at: string): void {

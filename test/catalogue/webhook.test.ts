@@ -60,6 +60,7 @@ describe("receiveDelivery", () => {
       applied: ["TICKET"],
       stale: [],
       replacements: [],
+      unlinked: [],
     });
     expect(saves()).toBe(1);
     const saved = store.load();
@@ -225,13 +226,13 @@ describe("receiveDelivery", () => {
     });
   });
 
-  it("treats a failing read of the linked price as unreachable, not as unassigned", async () => {
+  it("treats a failing read of the product's prices as unreachable, not as unassigned", async () => {
     const api = fakeCatalogueApi({
       products: [product({ id: "prod_1" })],
       prices: [price({ id: "price_2", productId: "prod_1" })],
     });
     const failing: CatalogueApi["fetch"] = async (input, init) =>
-      new URL(input).pathname === "/v1/prices/price_1"
+      new URL(input).pathname === "/v1/prices"
         ? Response.json({ error: "operation_failed" }, { status: 503 })
         : api.fetch(input, init);
     const { store, receive } = setup([LINKED], failing);
@@ -292,5 +293,96 @@ describe("receiveDelivery", () => {
       priceId: "price_1",
     });
     expect(isSellable(store.load().products.TICKET?.bupayment ?? null)).toBe(false);
+  });
+
+  it("applies an event to every product linked to the same BuPayment product, reading it once", async () => {
+    const api = fakeCatalogueApi({
+      products: [product({ id: "prod_1" })],
+      prices: [
+        price({ id: "price_1", productId: "prod_1", active: false, updatedAt: LATER }),
+        price({ id: "price_2", productId: "prod_1" }),
+      ],
+    });
+    const second = merchantProduct({ sku: "TICKET_2", bupayment: link() });
+    const { receive } = setup([LINKED, second], api.fetch);
+
+    const report = await receive(
+      verified(
+        priceEvent(
+          "catalogue.price.archived.v1",
+          price({ id: "price_1", productId: "prod_1", active: false, updatedAt: LATER }),
+        ),
+      ),
+    );
+
+    expect(report.applied).toEqual(["TICKET", "TICKET_2"]);
+    expect(report.replacements.map((entry) => entry.outcome)).toEqual(["repointed", "repointed"]);
+    expect(
+      api.requests.filter((request) => request.url.pathname === "/v1/products/prod_1"),
+    ).toHaveLength(1);
+  });
+
+  it("withdraws the product when BuPayment no longer lets this application read it", async () => {
+    const api = fakeCatalogueApi({ products: [product({ id: "prod_1" })] });
+    api.unassigned.add("prod_1");
+    const { store, receive } = setup([LINKED], api.fetch);
+
+    const report = await receive(
+      verified(
+        priceEvent(
+          "catalogue.price.archived.v1",
+          price({ id: "price_1", productId: "prod_1", active: false, updatedAt: LATER }),
+        ),
+      ),
+    );
+
+    expect(report.replacements).toEqual([{ sku: "TICKET", outcome: "withdrawn" }]);
+    expect(store.load().products.TICKET?.bupayment?.productAssigned).toBe(false);
+  });
+
+  it("reports an assigned BuPayment product that no local product links to", async () => {
+    const { receive } = setup([LINKED]);
+
+    const report = await receive(
+      verified(
+        productEvent("catalogue.product.assigned.v1", product({ id: "prod_new" }), {
+          occurredAt: LATER,
+        }),
+      ),
+    );
+
+    expect(report.unlinked).toEqual(["prod_new"]);
+  });
+
+  it("does not report a linked product as unlinked when its late assignment is stale", async () => {
+    const local = merchantProduct({
+      sku: "TICKET",
+      bupayment: link({ productAssigned: false, productAssignmentAt: LATER }),
+    });
+    const { receive } = setup([local]);
+
+    const report = await receive(
+      verified(
+        productEvent("catalogue.product.assigned.v1", product({ id: "prod_1" }), {
+          occurredAt: "2026-09-10T00:00:00Z",
+        }),
+      ),
+    );
+
+    expect(report).toMatchObject({ stale: ["TICKET"], unlinked: [] });
+  });
+
+  it("keeps the first time it saw a delivery", async () => {
+    const { store, receive } = setup([LINKED]);
+    await receive(verified(ARCHIVED, "dlv_1"));
+
+    await receiveDelivery(
+      testContext().context.bupayment.catalogue,
+      store,
+      verified(ARCHIVED, "dlv_1"),
+      () => new Date("2026-09-28T00:00:00.000Z"),
+    );
+
+    expect(store.load().received.deliveries.dlv_1).toBe(RECEIVED.toISOString());
   });
 });
