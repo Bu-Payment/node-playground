@@ -8,9 +8,11 @@ import {
   PRICING_MODES,
   putProduct,
 } from "../../catalogue/merchant";
+import { changePrice, type OrphanedPrice } from "../../catalogue/price-change";
 import { updateProduct } from "../../catalogue/store";
 import { buildStorefront, rememberLivePrice } from "../../catalogue/storefront";
 import type { AppContext } from "../../runtime/context";
+import { describeFailure } from "../../runtime/errors";
 
 const NewProductBody = z.object({
   sku: z.string().regex(/^[A-Za-z0-9._-]{1,64}$/),
@@ -23,6 +25,8 @@ const NewProductBody = z.object({
   stock: z.number().int().nonnegative(),
   price: MoneySchema,
 });
+
+const PriceBody = z.object({ amount: MoneySchema.shape.amount }).strict();
 
 const LinkBody = z.object({
   productId: z.string().min(1),
@@ -96,6 +100,61 @@ export function linkProductRoute(context: AppContext): RequestHandler<{ sku: str
     response.status(422).json({ code: result.reason, message: LINK_REFUSALS[result.reason] });
   };
 }
+
+export function changePriceRoute(context: AppContext): RequestHandler<{ sku: string }> {
+  return async (request, response) => {
+    const body = PriceBody.safeParse(request.body);
+    if (!body.success) {
+      response
+        .status(422)
+        .json({ code: "price_invalid", message: "amount must be a non-negative integer." });
+      return;
+    }
+    const sku = request.params.sku;
+    const result = await changePrice(
+      context.bupayment.catalogue,
+      context.catalogue,
+      sku,
+      body.data.amount,
+    );
+    if (!result.changed) {
+      if (result.reason === "product_changed" && result.orphan !== null) {
+        logOrphan(context, sku, result.orphan);
+      }
+      response.status(result.reason === "product_not_found" ? 404 : 409).json({
+        code: result.reason,
+        message: PRICE_REFUSALS[result.reason],
+      });
+      return;
+    }
+    const pending = result.archivePending;
+    if (pending !== null) {
+      context.logger.error("Previous BuPayment price was not archived", {
+        sku,
+        previousPriceId: pending.previousPriceId,
+        code: describeFailure(pending.error).code,
+      });
+    }
+    response.json({ product: result.product, archivePending: pending !== null });
+  };
+}
+
+function logOrphan(context: AppContext, sku: string, orphan: OrphanedPrice): void {
+  if (orphan.archived) {
+    context.logger.info("Unused BuPayment price archived", { sku, priceId: orphan.priceId });
+    return;
+  }
+  context.logger.error("Unused BuPayment price left active", {
+    sku,
+    priceId: orphan.priceId,
+    code: describeFailure(orphan.error).code,
+  });
+}
+
+const PRICE_REFUSALS = {
+  product_not_found: "No such local product.",
+  product_changed: "The product changed while its price was being changed; nothing was applied.",
+} as const;
 
 const LINK_REFUSALS = {
   price_not_of_product: "The price does not belong to that BuPayment product.",
