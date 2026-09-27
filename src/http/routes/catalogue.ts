@@ -126,6 +126,7 @@ export function changePriceRoute(context: AppContext): RequestHandler<{ sku: str
       context.logger.error("Previous BuPayment price was not archived", {
         sku,
         previousPriceId: pending.previousPriceId,
+        outcome: pending.outcome,
         code: describeFailure(pending.error).code,
       });
     }

@@ -17,16 +17,10 @@ The playground keeps its own product catalogue, in its own shape, and links each
 BuPayment product and price by reference. It follows BuPayment through a reconciliation sweep and
 catalogue webhooks, and changes a linked price through BuPayment first. See [Catalogue](#catalogue).
 
-Two things are left out rather than simulated:
-
-- **Changing the price of a single-price product.** BuPayment refuses to archive a product's default
-  price, and the SDK does not move the default to the replacement yet
-  ([node-sdk#26](https://github.com/Bu-Payment/node-sdk/issues/26)). Until it does, such a change
-  links the new price but leaves the old one active, reported as a pending archive.
-- **A checkout that asserts the displayed price.** The API and the SDK can refuse a charge at an
-  amount the customer did not see ([api#444](https://github.com/Bu-Payment/api/issues/444)), but
-  this playground has no checkout route; that is outside the catalogue synchronization it
-  demonstrates.
+One thing is left out rather than simulated: **a checkout that asserts the displayed price.** The
+API and the SDK can refuse a charge at an amount the customer did not see
+([api#444](https://github.com/Bu-Payment/api/issues/444)), but this playground has no checkout
+route; that is outside the catalogue synchronization it demonstrates.
 
 ## Run locally
 
@@ -187,16 +181,17 @@ The compiled equivalent is `bun run build && bun run start:reconcile`.
 a linked product, in order:
 
 1. The current BuPayment price is read, to keep its type and recurrence.
-2. The SDK creates the replacement and then archives the old price, sending the `updatedAt` last
-   seen so a price changed meanwhile is not archived blindly. The idempotency key is derived from
+2. The SDK reads the product, creates the replacement, moves the product's default to it when the
+   old price was the default, and then archives the old price. The move asserts the product's
+   `updatedAt`, so a default another writer chose meanwhile is not overwritten; the archive sends
+   the price `updatedAt` last seen, so a price changed meanwhile is not archived blindly. The idempotency key is derived from
    the SKU, the linked price, when it was linked and the amount, so retrying a change that failed
    part-way replays the first creation instead of creating a second price.
 3. Only then does the merchant's copy and the link move to the new price.
 
-If the archive fails, the link still moves to the new price and the response says
-`archivePending: true`; the old price stays active in BuPayment until someone archives it, and the
-failure is logged. This is always the case today for a product with a single price, because that
-price is the default (see [Status](#status)). If the product was linked to another price while this
+If moving the default or the archive fails, the link still moves to the new price and the response
+says `archivePending: true`; the old price stays active in BuPayment until someone archives it, and
+the failure is logged with the step that failed (`default_failed` or `archive_failed`). If the product was linked to another price while this
 ran, nothing is applied locally, the unused new price is archived, and the request answers
 `409 product_changed`. If a webhook already moved the link to the new price, the change stands.
 
