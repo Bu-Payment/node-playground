@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_HOST, DEFAULT_PORT, parseEnv } from "../../src/runtime/env";
+import {
+  DEFAULT_CATALOGUE_STORE_PATH,
+  DEFAULT_HOST,
+  DEFAULT_PORT,
+  parseEnv,
+} from "../../src/runtime/env";
 import { ConfigurationError } from "../../src/runtime/errors";
+import { WEBHOOK_SECRET } from "../fakes/webhook";
 import { FAKE_SECRET, VALID_ENV } from "../fixtures";
 
 describe("parseEnv", () => {
@@ -9,6 +15,13 @@ describe("parseEnv", () => {
 
     expect(env.HOST).toBe(DEFAULT_HOST);
     expect(env.PORT).toBe(DEFAULT_PORT);
+    expect(env.CATALOGUE_STORE_PATH).toBe(DEFAULT_CATALOGUE_STORE_PATH);
+  });
+
+  it("reads an explicit catalogue store path", () => {
+    expect(parseEnv({ ...VALID_ENV, CATALOGUE_STORE_PATH: "/srv/mirror.json" })).toMatchObject({
+      CATALOGUE_STORE_PATH: "/srv/mirror.json",
+    });
   });
 
   it("reads an explicit host and port", () => {
@@ -37,6 +50,38 @@ describe("parseEnv", () => {
 
     expect(call).toThrow(/BUPAYMENT_APP_ID is missing/);
     expect(call).toThrow(/PORT is invalid/);
+  });
+
+  it("treats a blank optional variable as absent", () => {
+    const env = parseEnv({
+      ...VALID_ENV,
+      HOST: "",
+      PORT: " ",
+      CATALOGUE_STORE_PATH: "",
+      BUPAYMENT_WEBHOOK_SECRET: "",
+    });
+
+    expect(env).toMatchObject({
+      HOST: DEFAULT_HOST,
+      PORT: DEFAULT_PORT,
+      CATALOGUE_STORE_PATH: DEFAULT_CATALOGUE_STORE_PATH,
+    });
+    expect(env.BUPAYMENT_WEBHOOK_SECRET).toBeUndefined();
+  });
+
+  it("treats the webhook endpoint secret as optional", () => {
+    expect(parseEnv(VALID_ENV).BUPAYMENT_WEBHOOK_SECRET).toBeUndefined();
+    expect(
+      parseEnv({ ...VALID_ENV, BUPAYMENT_WEBHOOK_SECRET: WEBHOOK_SECRET }).BUPAYMENT_WEBHOOK_SECRET,
+    ).toBe(WEBHOOK_SECRET);
+  });
+
+  it("refuses a malformed webhook endpoint secret without repeating it", () => {
+    const malformed = `${WEBHOOK_SECRET.slice(0, 20)}`;
+
+    expect(() => parseEnv({ ...VALID_ENV, BUPAYMENT_WEBHOOK_SECRET: malformed })).toThrow(
+      "Environment is not usable: BUPAYMENT_WEBHOOK_SECRET is invalid",
+    );
   });
 
   it("never repeats a rejected value, so a malformed secret cannot leak", () => {

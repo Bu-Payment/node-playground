@@ -1,0 +1,374 @@
+import type { FetchLike } from "@bu-payment/node-sdk";
+import request from "supertest";
+import { describe, expect, it } from "vitest";
+import { emptyCatalogue, type MerchantProduct, putProduct } from "../../src/catalogue/merchant";
+import { memoryStore } from "../../src/catalogue/store";
+import { createApp } from "../../src/http/app";
+import { fakeCatalogueApi, price, product, unreachableApi } from "../fakes/catalogue-api";
+import { link, merchantProduct } from "../fakes/merchant";
+import { testContext } from "../fixtures";
+
+function appWith(products: MerchantProduct[], fetch: FetchLike = unreachableApi()) {
+  const catalogue = emptyCatalogue();
+  for (const entry of products) {
+    putProduct(catalogue, entry);
+  }
+  const store = memoryStore(catalogue);
+  const { context, lines } = testContext({}, { fetch });
+  return { app: createApp({ ...context, catalogue: store }), store, lines };
+}
+
+const LIVE = merchantProduct({
+  sku: "PASS",
+  title: "Pass",
+  pricing: {
+    mode: "live",
+    lastKnown: { amount: 900, currency: "EUR", readAt: "2026-09-01T00:00:00Z" },
+  },
+  bupayment: link(),
+});
+
+describe("GET /catalogue", () => {
+  it("serves stored prices and the merchant's own fields with BuPayment unreachable", async () => {
+    const { app } = appWith([
+      merchantProduct({
+        sku: "TICKET",
+        title: "Ticket",
+        imageUrl: "https://cdn.example.test/t.png",
+        bupayment: link(),
+      }),
+      merchantProduct({ sku: "LOCAL", title: "Local only" }),
+    ]);
+
+    const response = await request(app).get("/catalogue");
+
+    expect(response.status).toBe(200);
+    expect(response.body.products).toEqual([
+      {
+        sku: "LOCAL",
+        title: "Local only",
+        slug: "local",
+        imageUrl: null,
+        stock: 10,
+        price: { amount: 1500, currency: "EUR", source: "stored", readAt: null },
+        sellable: false,
+      },
+      {
+        sku: "TICKET",
+        title: "Ticket",
+        slug: "ticket",
+        imageUrl: "https://cdn.example.test/t.png",
+        stock: 10,
+        price: { amount: 1500, currency: "EUR", source: "stored", readAt: null },
+        sellable: true,
+      },
+    ]);
+  });
+
+  it("reads a live price from BuPayment and remembers it", async () => {
+    const api = fakeCatalogueApi({
+      prices: [price({ id: "price_1", productId: "prod_1", unitAmount: 1200 })],
+    });
+    const { app, store } = appWith([LIVE], api.fetch);
+
+    const response = await request(app).get("/catalogue");
+
+    expect(response.body.products[0].price).toEqual({
+      amount: 1200,
+      currency: "EUR",
+      source: "live",
+      readAt: null,
+    });
+    expect(store.load().products.PASS?.pricing).toMatchObject({
+      mode: "live",
+      lastKnown: { amount: 1200, currency: "EUR" },
+    });
+  });
+
+  it("remembers every live price read in a single write", async () => {
+    const api = fakeCatalogueApi({
+      prices: [
+        price({ id: "price_1", productId: "prod_1", unitAmount: 1200 }),
+        price({ id: "price_2", productId: "prod_2", unitAmount: 1300 }),
+      ],
+    });
+    const second = {
+      ...LIVE,
+      sku: "PASS_2",
+      bupayment: link({ productId: "prod_2", priceId: "price_2" }),
+    };
+    const { app, store } = appWith([LIVE, second], api.fetch);
+    let saves = 0;
+    const save = store.save.bind(store);
+    store.save = (catalogue) => {
+      saves += 1;
+      save(catalogue);
+    };
+
+    await request(app).get("/catalogue");
+
+    expect(saves).toBe(1);
+    expect(store.load().products.PASS_2?.pricing).toMatchObject({ lastKnown: { amount: 1300 } });
+  });
+
+  it("does not write when no live price was read", async () => {
+    const { app, store } = appWith([merchantProduct({ sku: "TICKET" })]);
+    let saves = 0;
+    store.save = () => {
+      saves += 1;
+    };
+
+    await request(app).get("/catalogue");
+
+    expect(saves).toBe(0);
+  });
+
+  it("falls back to the last known live price when BuPayment is unreachable", async () => {
+    const { app } = appWith([LIVE]);
+
+    const response = await request(app).get("/catalogue");
+
+    expect(response.status).toBe(200);
+    expect(response.body.products[0].price).toEqual({
+      amount: 900,
+      currency: "EUR",
+      source: "last_known",
+      readAt: "2026-09-01T00:00:00Z",
+    });
+  });
+
+  it("shows no price for a live product never read and BuPayment unreachable", async () => {
+    const { app } = appWith([{ ...LIVE, pricing: { mode: "live", lastKnown: null } }]);
+
+    expect((await request(app).get("/catalogue")).body.products[0].price).toBeNull();
+  });
+});
+
+describe("POST /products", () => {
+  const body = {
+    sku: "TICKET",
+    title: "Ferry ticket",
+    slug: "ferry-ticket",
+    stock: 5,
+    price: { amount: 1500, currency: "EUR" },
+  };
+
+  it("creates an unlinked product with a local price", async () => {
+    const { app, store } = appWith([]);
+
+    const response = await request(app).post("/products").send(body);
+
+    expect(response.status).toBe(201);
+    expect(store.load().products.TICKET).toEqual({
+      sku: "TICKET",
+      title: "Ferry ticket",
+      slug: "ferry-ticket",
+      imageUrl: null,
+      stock: 5,
+      pricing: { mode: "stored", amount: 1500, currency: "EUR" },
+      bupayment: null,
+    });
+  });
+
+  it("refuses a SKU that already exists", async () => {
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })]);
+
+    const response = await request(app).post("/products").send(body);
+
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe("product_exists");
+  });
+
+  it.each([
+    { ...body, sku: "has space" },
+    { ...body, imageUrl: "javascript:alert(1)" },
+    { ...body, price: { amount: -1, currency: "EUR" } },
+    { ...body, price: { amount: 1, currency: "eur" } },
+  ])("refuses %o", async (invalid) => {
+    const { app, store } = appWith([]);
+
+    const response = await request(app).post("/products").send(invalid);
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe("product_invalid");
+    expect(store.load().products).toEqual({});
+  });
+});
+
+describe("PUT /products/:sku/link", () => {
+  const api = () =>
+    fakeCatalogueApi({
+      products: [product({ id: "prod_1" }), product({ id: "prod_2" })],
+      prices: [price({ id: "price_1", productId: "prod_1", unitAmount: 1800 })],
+    });
+
+  it("links a local product to a BuPayment product and price", async () => {
+    const { app, store } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+
+    const response = await request(app)
+      .put("/products/TICKET/link")
+      .send({ productId: "prod_1", priceId: "price_1", pricing: "stored" });
+
+    expect(response.status).toBe(200);
+    expect(store.load().products.TICKET?.bupayment?.priceId).toBe("price_1");
+  });
+
+  it.each(["__proto__", "UNKNOWN"])("answers 404 for the local SKU %s", async (sku) => {
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+
+    const response = await request(app)
+      .put(`/products/${sku}/link`)
+      .send({ productId: "prod_1", priceId: "price_1", pricing: "stored" });
+
+    expect(response.status).toBe(404);
+    expect(response.body.code).toBe("product_not_found");
+  });
+
+  it("refuses a price of another product", async () => {
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+
+    const response = await request(app)
+      .put("/products/TICKET/link")
+      .send({ productId: "prod_2", priceId: "price_1", pricing: "stored" });
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe("price_not_of_product");
+  });
+
+  it("refuses an archived BuPayment price", async () => {
+    const archived = fakeCatalogueApi({
+      products: [product({ id: "prod_1" })],
+      prices: [price({ id: "price_1", productId: "prod_1", active: false })],
+    });
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })], archived.fetch);
+
+    const response = await request(app)
+      .put("/products/TICKET/link")
+      .send({ productId: "prod_1", priceId: "price_1", pricing: "live" });
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe("inactive");
+  });
+
+  it("refuses a malformed link request", async () => {
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+
+    const response = await request(app)
+      .put("/products/TICKET/link")
+      .send({ productId: "prod_1", priceId: "price_1", pricing: "cached" });
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe("link_invalid");
+  });
+
+  it("maps a BuPayment 404 to the canonical SDK failure", async () => {
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+
+    const response = await request(app)
+      .put("/products/TICKET/link")
+      .send({ productId: "prod_missing", priceId: "price_1", pricing: "stored" });
+
+    expect(response.status).toBe(404);
+    expect(response.body.code).toBe("resource_not_found");
+  });
+});
+
+describe("PUT /products/:sku/price", () => {
+  const api = () =>
+    fakeCatalogueApi({
+      products: [product({ id: "prod_1", defaultPriceId: "price_0" })],
+      prices: [
+        price({ id: "price_0", productId: "prod_1", currency: "USD" }),
+        price({ id: "price_1", productId: "prod_1" }),
+      ],
+    });
+
+  it("changes a linked price through BuPayment", async () => {
+    const { app, store } = appWith(
+      [merchantProduct({ sku: "TICKET", bupayment: link() })],
+      api().fetch,
+    );
+
+    const response = await request(app).put("/products/TICKET/price").send({ amount: 1800 });
+
+    expect(response.status).toBe(200);
+    expect(response.body.archivePending).toBe(false);
+    expect(store.load().products.TICKET?.bupayment?.priceId).toBe("price_new_3");
+  });
+
+  it("reports and logs an archive left pending", async () => {
+    const failing = api();
+    failing.failArchive = true;
+    const { app, lines } = appWith(
+      [merchantProduct({ sku: "TICKET", bupayment: link() })],
+      failing.fetch,
+    );
+
+    const response = await request(app).put("/products/TICKET/price").send({ amount: 1800 });
+
+    expect(response.body.archivePending).toBe(true);
+    expect(JSON.parse(lines[0] ?? "{}")).toEqual({
+      level: "error",
+      message: "Previous BuPayment price was not archived",
+      sku: "TICKET",
+      previousPriceId: "price_1",
+      code: "operation_failed",
+    });
+  });
+
+  it.each([
+    [false, { level: "info", message: "Unused BuPayment price archived" }],
+    [
+      true,
+      { level: "error", message: "Unused BuPayment price left active", code: "operation_failed" },
+    ],
+  ])("answers 409 and logs the unused price when the product changed meanwhile (archive fails: %s)", async (archiveFails, logged) => {
+    const fake = api();
+    const linked = merchantProduct({ sku: "TICKET", bupayment: link() });
+    const { app, store, lines } = appWith([linked], fake.fetch);
+    const load = store.load.bind(store);
+    let loads = 0;
+    store.load = () => {
+      loads += 1;
+      const catalogue = load();
+      if (loads > 1) {
+        fake.failArchive = archiveFails;
+        putProduct(catalogue, { ...linked, bupayment: link({ priceId: "price_other" }) });
+      }
+      return catalogue;
+    };
+
+    const response = await request(app).put("/products/TICKET/price").send({ amount: 1800 });
+
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe("product_changed");
+    expect(JSON.parse(lines[0] ?? "{}")).toEqual({
+      ...logged,
+      sku: "TICKET",
+      priceId: "price_new_3",
+    });
+  });
+
+  it("answers 404 for an unknown SKU", async () => {
+    const { app } = appWith([], api().fetch);
+
+    const response = await request(app).put("/products/TICKET/price").send({ amount: 1800 });
+
+    expect(response.status).toBe(404);
+    expect(response.body.code).toBe("product_not_found");
+  });
+
+  it.each([
+    { amount: -1 },
+    { amount: 1.5 },
+    { amount: 1800, currency: "USD" },
+    {},
+  ])("refuses %o", async (body) => {
+    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+
+    const response = await request(app).put("/products/TICKET/price").send(body);
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe("price_invalid");
+  });
+});
