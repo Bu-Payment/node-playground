@@ -6,6 +6,7 @@ export interface CatalogueApi {
   products: Product[];
   prices: Price[];
   requests: { url: URL; method: string; headers: Record<string, string>; body: unknown }[];
+  unassigned: Set<string>;
   failArchive: boolean;
   fetch: FetchLike;
 }
@@ -18,6 +19,7 @@ export function fakeCatalogueApi(
     products: seed.products ?? [],
     prices: seed.prices ?? [],
     requests: [],
+    unassigned: new Set(),
     failArchive: false,
     fetch: async (input, init) => {
       const url = new URL(input);
@@ -36,13 +38,19 @@ export function fakeCatalogueApi(
       if (single !== null) {
         const pool: { id: string }[] = single[1] === "products" ? api.products : api.prices;
         const found = pool.find((row) => row.id === decodeURIComponent(single[2] ?? ""));
-        return found === undefined
-          ? Response.json({ error: "resource_not_found", message: "Not found" }, { status: 404 })
+        return found === undefined || api.unassigned.has(found.id)
+          ? notFound()
           : Response.json(found);
       }
-      const rows = url.pathname === "/v1/products" ? api.products : api.prices;
+      const rows: (Product | Price)[] = url.pathname === "/v1/products" ? api.products : api.prices;
       const active = url.searchParams.get("active") !== "false";
-      const matching = rows.filter((row) => row.active === active);
+      const productId = url.searchParams.get("productId");
+      const matching = rows.filter(
+        (row) =>
+          row.active === active &&
+          !api.unassigned.has(row.id) &&
+          (productId === null || ("productId" in row && row.productId === productId)),
+      );
       const offset = Number(url.searchParams.get("cursor") ?? "0");
       const end = offset + pageSize;
       return Response.json({
@@ -58,17 +66,27 @@ function write(api: CatalogueApi, path: string, body: unknown): Response {
   const created = /^\/v1\/products\/([^/]+)\/prices$/.exec(path);
   if (created !== null) {
     const productId = decodeURIComponent(created[1] ?? "");
-    if (!api.products.some((row) => row.id === productId)) {
-      return Response.json({ error: "resource_not_found", message: "Not found" }, { status: 404 });
+    const owner = api.products.find((row) => row.id === productId);
+    if (owner === undefined || api.unassigned.has(productId)) {
+      return notFound();
     }
     const price = createdPrice(api, productId, body as PriceFields);
     api.prices.push(price);
+    if (owner.defaultPriceId === null) {
+      Object.assign(owner, { defaultPriceId: price.id, updatedAt: WRITTEN_AT });
+    }
     return Response.json(price, { status: 201 });
   }
   const archived = /^\/v1\/prices\/([^/]+)\/archive$/.exec(path);
   const found = api.prices.find((row) => row.id === decodeURIComponent(archived?.[1] ?? ""));
-  if (archived === null || found === undefined) {
-    return Response.json({ error: "resource_not_found", message: "Not found" }, { status: 404 });
+  if (archived === null || found === undefined || api.unassigned.has(found.id)) {
+    return notFound();
+  }
+  if (api.products.some((row) => row.defaultPriceId === found.id)) {
+    return Response.json(
+      { error: "default_price_in_use", message: "The default price cannot be archived" },
+      { status: 409 },
+    );
   }
   if (api.failArchive) {
     return Response.json({ error: "operation_failed", message: "Unavailable" }, { status: 503 });
@@ -108,6 +126,10 @@ function createdPrice(api: CatalogueApi, productId: string, fields: PriceFields)
     createdAt: WRITTEN_AT,
     updatedAt: WRITTEN_AT,
   };
+}
+
+function notFound(): Response {
+  return Response.json({ error: "resource_not_found", message: "Not found" }, { status: 404 });
 }
 
 function decodeBody(body: RequestInit["body"]): unknown {

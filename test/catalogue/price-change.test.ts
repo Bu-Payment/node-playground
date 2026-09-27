@@ -30,8 +30,11 @@ function setup(local: MerchantProduct, api: CatalogueApi = defaultApi()) {
 
 function defaultApi() {
   return fakeCatalogueApi({
-    products: [product({ id: "prod_1" })],
-    prices: [price({ id: "price_1", productId: "prod_1" })],
+    products: [product({ id: "prod_1", defaultPriceId: "price_0" })],
+    prices: [
+      price({ id: "price_0", productId: "prod_1", currency: "USD" }),
+      price({ id: "price_1", productId: "prod_1" }),
+    ],
   });
 }
 
@@ -68,7 +71,7 @@ describe("changePrice", () => {
     expect(api.prices.find((row) => row.id === "price_1")?.active).toBe(false);
     expect(store.load().products.TICKET).toMatchObject({
       pricing: { mode: "stored", amount: 1800, currency: "EUR" },
-      bupayment: { priceId: "price_new_2", priceActive: true, priceUpdatedAt: WRITTEN_AT },
+      bupayment: { priceId: "price_new_3", priceActive: true, priceUpdatedAt: WRITTEN_AT },
     });
   });
 
@@ -86,7 +89,7 @@ describe("changePrice", () => {
 
   it("keeps the recurrence of the price it replaces", async () => {
     const api = fakeCatalogueApi({
-      products: [product({ id: "prod_1" })],
+      products: [product({ id: "prod_1", defaultPriceId: "price_1" })],
       prices: [
         price({
           id: "price_1",
@@ -119,6 +122,21 @@ describe("changePrice", () => {
     });
   });
 
+  it("cannot archive the price of a single-price product yet, because it is the default", async () => {
+    const api = fakeCatalogueApi({
+      products: [product({ id: "prod_1", defaultPriceId: "price_1" })],
+      prices: [price({ id: "price_1", productId: "prod_1" })],
+    });
+    const { store, change } = setup(LINKED, api);
+
+    const result = await change("TICKET", 1800);
+
+    const error = result.changed ? result.archivePending?.error : undefined;
+    expect(error).toBeInstanceOf(BuPaymentError);
+    expect((error as BuPaymentError).metadata?.apiError).toBe("default_price_in_use");
+    expect(store.load().products.TICKET?.bupayment?.priceId).toBe("price_new_2");
+  });
+
   it("links the new price and reports the archive as pending when it fails", async () => {
     const api = defaultApi();
     api.failArchive = true;
@@ -127,7 +145,7 @@ describe("changePrice", () => {
     const result = await change("TICKET", 1800);
 
     expect(result.changed && result.archivePending?.previousPriceId).toBe("price_1");
-    expect(store.load().products.TICKET?.bupayment?.priceId).toBe("price_new_2");
+    expect(store.load().products.TICKET?.bupayment?.priceId).toBe("price_new_3");
     expect(api.prices.find((row) => row.id === "price_1")?.active).toBe(true);
   });
 
@@ -195,9 +213,9 @@ describe("changePrice", () => {
     expect(result).toEqual({
       changed: false,
       reason: "product_changed",
-      orphan: { priceId: "price_new_2", archived: true, error: null },
+      orphan: { priceId: "price_new_3", archived: true, error: null },
     });
-    expect(api.prices.find((row) => row.id === "price_new_2")?.active).toBe(false);
+    expect(api.prices.find((row) => row.id === "price_new_3")?.active).toBe(false);
   });
 
   it("reports an unused price it could not archive", async () => {
@@ -219,7 +237,7 @@ describe("changePrice", () => {
 
     expect(result).toMatchObject({
       reason: "product_changed",
-      orphan: { priceId: "price_new_2", archived: false },
+      orphan: { priceId: "price_new_3", archived: false },
     });
   });
 

@@ -238,8 +238,11 @@ describe("PUT /products/:sku/link", () => {
 describe("PUT /products/:sku/price", () => {
   const api = () =>
     fakeCatalogueApi({
-      products: [product({ id: "prod_1" })],
-      prices: [price({ id: "price_1", productId: "prod_1" })],
+      products: [product({ id: "prod_1", defaultPriceId: "price_0" })],
+      prices: [
+        price({ id: "price_0", productId: "prod_1", currency: "USD" }),
+        price({ id: "price_1", productId: "prod_1" }),
+      ],
     });
 
   it("changes a linked price through BuPayment", async () => {
@@ -252,7 +255,7 @@ describe("PUT /products/:sku/price", () => {
 
     expect(response.status).toBe(200);
     expect(response.body.archivePending).toBe(false);
-    expect(store.load().products.TICKET?.bupayment?.priceId).toBe("price_new_2");
+    expect(store.load().products.TICKET?.bupayment?.priceId).toBe("price_new_3");
   });
 
   it("reports and logs an archive left pending", async () => {
@@ -304,7 +307,7 @@ describe("PUT /products/:sku/price", () => {
     expect(JSON.parse(lines[0] ?? "{}")).toEqual({
       ...logged,
       sku: "TICKET",
-      priceId: "price_new_2",
+      priceId: "price_new_3",
     });
   });
 
