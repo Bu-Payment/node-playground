@@ -20,9 +20,14 @@ export function link(overrides: Partial<CatalogueLink> = {}): CatalogueLink {
   return {
     productId: "prod_1",
     priceId: "price_1",
-    sellable: true,
+    productActive: true,
+    priceActive: true,
+    productAssigned: true,
+    priceAssigned: true,
     productUpdatedAt: OBSERVED,
     priceUpdatedAt: OBSERVED,
+    productAssignmentAt: null,
+    priceAssignmentAt: null,
     ...overrides,
   };
 }

@@ -1,5 +1,5 @@
 import type { Price } from "@bu-payment/node-sdk";
-import { type MerchantCatalogue, type MerchantProduct, pricingFrom } from "./merchant";
+import { isSellable, type MerchantCatalogue, type MerchantProduct, pricingFrom } from "./merchant";
 
 export type PriceReader = (priceId: string) => Promise<Price>;
 
@@ -54,7 +54,7 @@ async function show(
     slug: product.slug,
     imageUrl: product.imageUrl,
     stock: product.stock,
-    sellable: product.bupayment?.sellable ?? false,
+    sellable: isSellable(product.bupayment),
   };
   const pricing = product.pricing;
   if (pricing.mode === "stored") {

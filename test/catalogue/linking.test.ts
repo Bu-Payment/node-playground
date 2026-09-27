@@ -45,7 +45,10 @@ describe("linkProduct", () => {
       bupayment: {
         productId: "prod_1",
         priceId: "price_1",
-        sellable: true,
+        productActive: true,
+        priceActive: true,
+        productAssigned: true,
+        priceAssigned: true,
         productUpdatedAt: OBSERVED,
         priceUpdatedAt: OBSERVED,
       },

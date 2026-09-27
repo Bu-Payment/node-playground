@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { indexRemote, syncLink } from "../../src/catalogue/link-sync";
+import { isSellable } from "../../src/catalogue/merchant";
 import { price, product } from "../fakes/catalogue-api";
 import { link, merchantProduct, OBSERVED } from "../fakes/merchant";
 
@@ -90,7 +91,7 @@ describe("syncLink", () => {
     const second = syncLink(first.product, remote, READ_AT);
 
     expect(first.outcome).toBe("archived");
-    expect(first.product.bupayment?.sellable).toBe(false);
+    expect(isSellable(first.product.bupayment)).toBe(false);
     expect(second.outcome).toBe("in_sync");
   });
 
@@ -100,17 +101,17 @@ describe("syncLink", () => {
     const result = syncLink(local, indexRemote([], []), READ_AT);
 
     expect(result.outcome).toBe("withdrawn");
-    expect(result.product.bupayment?.sellable).toBe(false);
+    expect(isSellable(result.product.bupayment)).toBe(false);
   });
 
   it("makes a reactivated product sellable again", () => {
-    const local = merchantProduct({ sku: "TICKET", bupayment: link({ sellable: false }) });
+    const local = merchantProduct({ sku: "TICKET", bupayment: link({ productActive: false }) });
     const remote = remoteWith({ products: [product({ id: "prod_1", updatedAt: LATER })] });
 
     const result = syncLink(local, remote, READ_AT);
 
     expect(result.outcome).toBe("updated");
-    expect(result.product.bupayment?.sellable).toBe(true);
+    expect(isSellable(result.product.bupayment)).toBe(true);
   });
 
   it.each([
@@ -173,7 +174,8 @@ describe("syncLink", () => {
     const result = syncLink(local, remote, READ_AT);
 
     expect(result.outcome).toBe("price_needs_decision");
-    expect(result.product.bupayment).toMatchObject({ priceId: "price_1", sellable: false });
+    expect(result.product.bupayment).toMatchObject({ priceId: "price_1", priceActive: false });
+    expect(isSellable(result.product.bupayment)).toBe(false);
     expect(result.product.pricing).toEqual(local.pricing);
   });
 
@@ -204,6 +206,56 @@ describe("syncLink", () => {
     });
 
     expect(syncLink(local, remote, READ_AT).outcome).toBe("price_needs_decision");
+  });
+
+  it("reports an archive that follows a pending price decision", () => {
+    const local = merchantProduct({ sku: "TICKET", bupayment: link({ priceActive: false }) });
+    const remote = remoteWith({
+      products: [product({ id: "prod_1", active: false, updatedAt: LATER })],
+      prices: [price({ id: "price_1", productId: "prod_1", active: false })],
+    });
+
+    expect(syncLink(local, remote, READ_AT).outcome).toBe("archived");
+  });
+
+  it("marks a linked price no longer visible as unassigned", () => {
+    const local = merchantProduct({ sku: "TICKET", bupayment: link() });
+
+    const result = syncLink(local, remoteWith({ prices: [] }), READ_AT);
+
+    expect(result.outcome).toBe("price_needs_decision");
+    expect(result.product.bupayment).toMatchObject({ priceAssigned: false, priceActive: true });
+  });
+
+  it("prefers the default price among several compatible replacements", () => {
+    const local = merchantProduct({ sku: "TICKET", bupayment: link() });
+    const remote = remoteWith({
+      prices: [
+        price({ id: "price_1", productId: "prod_1", active: false, updatedAt: LATER }),
+        price({ id: "price_2", productId: "prod_1" }),
+        price({ id: "price_3", productId: "prod_1", unitAmount: 2000 }),
+      ],
+    });
+
+    const result = syncLink(local, remote, READ_AT, "price_3");
+
+    expect(result.outcome).toBe("repointed");
+    expect(result.product.bupayment?.priceId).toBe("price_3");
+  });
+
+  it("ignores a default price that is not a compatible replacement", () => {
+    const local = merchantProduct({ sku: "TICKET", bupayment: link() });
+    const remote = remoteWith({
+      prices: [
+        price({ id: "price_1", productId: "prod_1", active: false, updatedAt: LATER }),
+        price({ id: "price_2", productId: "prod_1" }),
+        price({ id: "price_usd", productId: "prod_1", currency: "USD" }),
+      ],
+    });
+
+    expect(syncLink(local, remote, READ_AT, "price_usd").product.bupayment?.priceId).toBe(
+      "price_2",
+    );
   });
 
   it("keeps the newest of two reads of the same resource", () => {

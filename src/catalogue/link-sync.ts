@@ -31,6 +31,7 @@ export function syncLink(
   product: MerchantProduct,
   remote: RemoteCatalogue,
   readAt: string,
+  defaultPriceId: string | null = null,
 ): LinkSyncResult {
   const link = product.bupayment;
   if (link === null) {
@@ -38,47 +39,71 @@ export function syncLink(
   }
   const remoteProduct = remote.products.get(link.productId);
   if (remoteProduct === undefined) {
-    return unsellable(product, link, "withdrawn");
+    return settle(product, { ...link, productAssigned: false }, false);
   }
   const linkedPrice = remote.prices.get(link.priceId);
   if (isStale(link, remoteProduct, linkedPrice)) {
     return { outcome: "stale", product };
   }
-  if (!remoteProduct.active) {
-    return unsellable(product, { ...link, productUpdatedAt: remoteProduct.updatedAt }, "archived");
-  }
-  const current = currentPrice(remoteProduct, linkedPrice, remote);
+  const observed: CatalogueLink = {
+    ...link,
+    productAssigned: true,
+    productActive: remoteProduct.active,
+    productUpdatedAt: remoteProduct.updatedAt,
+  };
+  const current = currentPrice(remoteProduct, linkedPrice, remote, defaultPriceId);
   if (current === undefined) {
-    return {
-      outcome: "price_needs_decision",
-      product: { ...product, bupayment: { ...link, sellable: false } },
-    };
+    const awaitingPriceDecision = remoteProduct.active;
+    return settle(product, withLinkedPrice(observed, linkedPrice), awaitingPriceDecision);
   }
   const next: MerchantProduct = {
     ...product,
     pricing: pricingFrom(product.pricing.mode, current, readAt),
     bupayment: {
-      productId: remoteProduct.id,
+      ...observed,
       priceId: current.id,
-      sellable: true,
-      productUpdatedAt: remoteProduct.updatedAt,
+      priceActive: true,
+      priceAssigned: true,
       priceUpdatedAt: current.updatedAt,
     },
   };
   return { outcome: outcomeOf(product, next), product: next };
 }
 
-function unsellable(
+function withLinkedPrice(link: CatalogueLink, linked: Price | undefined): CatalogueLink {
+  if (linked === undefined) {
+    return { ...link, priceAssigned: false };
+  }
+  return {
+    ...link,
+    priceAssigned: true,
+    priceActive: linked.active,
+    priceUpdatedAt: linked.updatedAt,
+  };
+}
+
+function settle(
   product: MerchantProduct,
   link: CatalogueLink,
-  outcome: "archived" | "withdrawn",
+  needsDecision: boolean,
 ): LinkSyncResult {
-  const next = { ...product, bupayment: { ...link, sellable: false } };
-  return { outcome: link.sellable ? outcome : "in_sync", product: next };
+  const next = { ...product, bupayment: link };
+  return {
+    outcome: needsDecision ? "price_needs_decision" : outcomeOf(product, next),
+    product: next,
+  };
 }
 
 function outcomeOf(before: MerchantProduct, after: MerchantProduct): LinkOutcome {
-  if (before.bupayment?.priceId !== after.bupayment?.priceId) {
+  const was = before.bupayment;
+  const is = after.bupayment;
+  if (was?.productAssigned === true && is?.productAssigned === false) {
+    return "withdrawn";
+  }
+  if (was?.productActive === true && is?.productActive === false) {
+    return "archived";
+  }
+  if (was?.priceId !== is?.priceId) {
     return "repointed";
   }
   const unchanged = JSON.stringify(comparable(before)) === JSON.stringify(comparable(after));
@@ -92,13 +117,22 @@ function comparable(product: MerchantProduct) {
       ? [pricing.amount, pricing.currency]
       : [pricing.lastKnown?.amount, pricing.lastKnown?.currency];
   const link = product.bupayment;
-  return [money, link?.sellable, link?.productUpdatedAt, link?.priceUpdatedAt];
+  return [
+    money,
+    link?.productActive,
+    link?.priceActive,
+    link?.productAssigned,
+    link?.priceAssigned,
+    link?.productUpdatedAt,
+    link?.priceUpdatedAt,
+  ];
 }
 
 function currentPrice(
   product: Product,
   linked: Price | undefined,
   remote: RemoteCatalogue,
+  defaultPriceId: string | null,
 ): Price | undefined {
   if (linked === undefined) {
     return undefined;
@@ -109,6 +143,10 @@ function currentPrice(
   const candidates = [...remote.prices.values()].filter(
     (price) => price.productId === product.id && price.active && interchangeable(price, linked),
   );
+  const preferred = candidates.find((price) => price.id === defaultPriceId);
+  if (preferred !== undefined) {
+    return preferred;
+  }
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 

@@ -1,6 +1,6 @@
 import { BuPaymentError } from "@bu-payment/node-sdk";
 import { describe, expect, it } from "vitest";
-import { emptyCatalogue, putProduct } from "../../src/catalogue/merchant";
+import { emptyCatalogue, isSellable, putProduct } from "../../src/catalogue/merchant";
 import { reconcileCatalogue } from "../../src/catalogue/reconcile";
 import { memoryStore } from "../../src/catalogue/store";
 import { type CatalogueApi, fakeCatalogueApi, price, product } from "../fakes/catalogue-api";
@@ -55,7 +55,7 @@ describe("reconcileCatalogue", () => {
     const report = await reconcile(api, store);
 
     expect(report.changes).toEqual([{ sku: "TICKET", outcome: "archived" }]);
-    expect(store.load().products.TICKET?.bupayment?.sellable).toBe(false);
+    expect(isSellable(store.load().products.TICKET?.bupayment ?? null)).toBe(false);
   });
 
   it("pulls a changed stored price and counts the rest as in sync", async () => {

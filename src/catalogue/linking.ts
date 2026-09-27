@@ -40,9 +40,14 @@ export async function linkProduct(
     bupayment: {
       productId: product.id,
       priceId: price.id,
-      sellable: true,
+      productActive: true,
+      priceActive: true,
+      productAssigned: true,
+      priceAssigned: true,
       productUpdatedAt: product.updatedAt,
       priceUpdatedAt: price.updatedAt,
+      productAssignmentAt: null,
+      priceAssignmentAt: null,
     },
   }));
   return linked === undefined

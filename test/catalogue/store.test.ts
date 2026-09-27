@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { emptyCatalogue, putProduct } from "../../src/catalogue/merchant";
+import { emptyCatalogue, isSellable, putProduct } from "../../src/catalogue/merchant";
 import { fileStore, memoryStore, updateProduct } from "../../src/catalogue/store";
 import { link, merchantProduct } from "../fakes/merchant";
 
@@ -46,6 +46,59 @@ describe("fileStore", () => {
     fileStore(path).save(catalogue);
 
     expect(fileStore(path).load()).toEqual(catalogue);
+  });
+
+  it("loads a catalogue written before link facts and received webhooks existed", () => {
+    const path = join(scratch(), "catalogue.json");
+    const legacyLink = {
+      productId: "prod_1",
+      priceId: "price_1",
+      sellable: true,
+      productUpdatedAt: "2026-09-01T00:00:00.000Z",
+      priceUpdatedAt: "2026-09-01T00:00:00.000Z",
+    };
+    const legacy = merchantProduct({ sku: "TICKET" });
+    writeFileSync(
+      path,
+      JSON.stringify({ products: { TICKET: { ...legacy, bupayment: legacyLink } } }),
+    );
+
+    const loaded = fileStore(path).load();
+
+    expect(loaded.received).toEqual({ deliveries: {}, events: {} });
+    expect(loaded.products.TICKET?.bupayment).toEqual({
+      productId: "prod_1",
+      priceId: "price_1",
+      productActive: true,
+      priceActive: true,
+      productAssigned: true,
+      priceAssigned: true,
+      productUpdatedAt: "2026-09-01T00:00:00.000Z",
+      priceUpdatedAt: "2026-09-01T00:00:00.000Z",
+      productAssignmentAt: null,
+      priceAssignmentAt: null,
+    });
+  });
+
+  it("keeps a legacy unsellable link unsellable", () => {
+    const path = join(scratch(), "catalogue.json");
+    const legacyLink = {
+      productId: "prod_1",
+      priceId: "price_1",
+      sellable: false,
+      productUpdatedAt: "2026-09-01T00:00:00.000Z",
+      priceUpdatedAt: "2026-09-01T00:00:00.000Z",
+    };
+    const legacy = merchantProduct({ sku: "TICKET" });
+    writeFileSync(
+      path,
+      JSON.stringify({ products: { TICKET: { ...legacy, bupayment: legacyLink } } }),
+    );
+
+    const link = fileStore(path).load().products.TICKET?.bupayment ?? null;
+
+    expect(isSellable(link)).toBe(false);
+    expect(link).not.toHaveProperty("sellable");
   });
 
   it("refuses a file that does not hold a merchant catalogue", () => {

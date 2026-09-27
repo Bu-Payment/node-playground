@@ -13,13 +13,20 @@ const LivePricingSchema = z.object({
   lastKnown: MoneySchema.extend({ readAt: z.string() }).nullable(),
 });
 
-const CatalogueLinkSchema = z.object({
+const LinkFactsSchema = z.object({
   productId: z.string(),
   priceId: z.string(),
-  sellable: z.boolean(),
+  productActive: z.boolean().default(true),
+  priceActive: z.boolean().default(true),
+  productAssigned: z.boolean().default(true),
+  priceAssigned: z.boolean().default(true),
   productUpdatedAt: z.string(),
   priceUpdatedAt: z.string(),
+  productAssignmentAt: z.string().nullable().default(null),
+  priceAssignmentAt: z.string().nullable().default(null),
 });
+
+const CatalogueLinkSchema = z.preprocess(withoutLegacySellable, LinkFactsSchema);
 
 const MerchantProductSchema = z.object({
   sku: z.string(),
@@ -31,18 +38,30 @@ const MerchantProductSchema = z.object({
   bupayment: CatalogueLinkSchema.nullable(),
 });
 
+const ReceivedWebhooksSchema = z.object({
+  deliveries: z.record(z.string(), z.string()),
+  events: z.record(z.string(), z.string()),
+});
+
 export const MerchantCatalogueSchema = z.object({
   products: z.record(z.string(), MerchantProductSchema),
+  received: ReceivedWebhooksSchema.default({ deliveries: {}, events: {} }),
 });
 
 export const PRICING_MODES = ["stored", "live"] as const;
 export type PricingMode = (typeof PRICING_MODES)[number];
-export type CatalogueLink = z.infer<typeof CatalogueLinkSchema>;
+export type CatalogueLink = z.infer<typeof LinkFactsSchema>;
 export type MerchantProduct = z.infer<typeof MerchantProductSchema>;
 export type MerchantCatalogue = z.infer<typeof MerchantCatalogueSchema>;
 
 export function emptyCatalogue(): MerchantCatalogue {
-  return { products: {} };
+  return { products: {}, received: { deliveries: {}, events: {} } };
+}
+
+export function isSellable(link: CatalogueLink | null): boolean {
+  return (
+    link?.productActive === true && link.priceActive && link.productAssigned && link.priceAssigned
+  );
 }
 
 export function findProduct(
@@ -75,4 +94,14 @@ export function pricingFrom(
   return mode === "stored"
     ? { mode: "stored", ...money }
     : { mode: "live", lastKnown: { ...money, readAt } };
+}
+
+function withoutLegacySellable(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || !("sellable" in value)) {
+    return value;
+  }
+  const { sellable, ...link } = value as Record<string, unknown>;
+  return sellable === false && !("productActive" in link)
+    ? { ...link, productActive: false }
+    : link;
 }
