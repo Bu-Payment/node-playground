@@ -27,11 +27,16 @@ export function indexRemote(
   return { products: latestById(products), prices: latestById(prices) };
 }
 
+export interface SyncOptions {
+  defaultPriceId?: string | null;
+  unassignedPriceId?: string;
+}
+
 export function syncLink(
   product: MerchantProduct,
   remote: RemoteCatalogue,
   readAt: string,
-  defaultPriceId: string | null = null,
+  options: SyncOptions = {},
 ): LinkSyncResult {
   const link = product.bupayment;
   if (link === null) {
@@ -51,10 +56,21 @@ export function syncLink(
     productActive: remoteProduct.active,
     productUpdatedAt: remoteProduct.updatedAt,
   };
-  const current = currentPrice(remoteProduct, linkedPrice, remote, defaultPriceId);
+  const linkedAssigned = linkedPrice !== undefined && options.unassignedPriceId !== linkedPrice.id;
+  const current = currentPrice(
+    remoteProduct,
+    linkedPrice,
+    linkedAssigned,
+    remote,
+    options.defaultPriceId ?? null,
+  );
   if (current === undefined) {
     const awaitingPriceDecision = remoteProduct.active;
-    return settle(product, withLinkedPrice(observed, linkedPrice), awaitingPriceDecision);
+    return settle(
+      product,
+      withLinkedPrice(observed, linkedPrice, linkedAssigned),
+      awaitingPriceDecision,
+    );
   }
   const next: MerchantProduct = {
     ...product,
@@ -70,8 +86,12 @@ export function syncLink(
   return { outcome: outcomeOf(product, next), product: next };
 }
 
-function withLinkedPrice(link: CatalogueLink, linked: Price | undefined): CatalogueLink {
-  if (linked === undefined) {
+function withLinkedPrice(
+  link: CatalogueLink,
+  linked: Price | undefined,
+  assigned: boolean,
+): CatalogueLink {
+  if (linked === undefined || !assigned) {
     return { ...link, priceAssigned: false };
   }
   return {
@@ -131,17 +151,22 @@ function comparable(product: MerchantProduct) {
 function currentPrice(
   product: Product,
   linked: Price | undefined,
+  linkedAssigned: boolean,
   remote: RemoteCatalogue,
   defaultPriceId: string | null,
 ): Price | undefined {
   if (linked === undefined) {
     return undefined;
   }
-  if (linked.active) {
+  if (linked.active && linkedAssigned) {
     return linked;
   }
   const candidates = [...remote.prices.values()].filter(
-    (price) => price.productId === product.id && price.active && interchangeable(price, linked),
+    (price) =>
+      price.id !== linked.id &&
+      price.productId === product.id &&
+      price.active &&
+      interchangeable(price, linked),
   );
   const preferred = candidates.find((price) => price.id === defaultPriceId);
   if (preferred !== undefined) {

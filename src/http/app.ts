@@ -8,10 +8,16 @@ import {
   linkProductRoute,
 } from "./routes/catalogue";
 import { healthRoute } from "./routes/health";
+import { webhookRoute } from "./routes/webhook";
 
 export function createApp(context: AppContext): Express {
   const app = express();
   app.disable("x-powered-by");
+  app.post(
+    "/webhooks/bupayment",
+    express.raw({ type: "application/json", limit: "256kb" }),
+    webhookRoute(context),
+  );
   app.use(express.json({ limit: "64kb" }));
   app.get("/healthz", healthRoute(context));
   app.get("/catalogue", catalogueRoute(context));

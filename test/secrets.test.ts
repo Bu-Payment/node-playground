@@ -10,6 +10,7 @@ import { memoryStore } from "../src/catalogue/store";
 import { createApp } from "../src/http/app";
 import { fakeCatalogueApi, product } from "./fakes/catalogue-api";
 import { link, merchantProduct } from "./fakes/merchant";
+import { productEvent, signed, WEBHOOK_SECRET } from "./fakes/webhook";
 import { FAKE_SECRET, testContext, testLogger, VALID_ENV } from "./fixtures";
 
 const directories: string[] = [];
@@ -114,5 +115,31 @@ describe("the confidential secret", () => {
 
     expect(responses.map((response) => response.text).join("\n")).not.toContain(FAKE_SECRET);
     expect(lines.join("\n")).not.toContain(FAKE_SECRET);
+  });
+
+  it("keeps the webhook endpoint secret out of the log and every webhook response", async () => {
+    const { context, lines } = testContext({ BUPAYMENT_WEBHOOK_SECRET: WEBHOOK_SECRET });
+    const app = createApp(context);
+    const event = productEvent(
+      "catalogue.product.archived.v1",
+      product({ id: "prod_1", active: false }),
+    );
+    const valid = signed(event);
+
+    const responses = await Promise.all([
+      request(app).post("/webhooks/bupayment").set(valid.headers).send(valid.body),
+      request(app)
+        .post("/webhooks/bupayment")
+        .set({ ...valid.headers, "x-webhook-signature": WEBHOOK_SECRET })
+        .send(valid.body),
+      request(app)
+        .post("/webhooks/bupayment")
+        .set(valid.headers)
+        .send(valid.body.replace("prod_1", WEBHOOK_SECRET)),
+    ]);
+
+    const everything = [...responses.map((response) => response.text), ...lines].join("\n");
+    expect(everything).not.toContain(WEBHOOK_SECRET);
+    expect(everything).not.toContain(FAKE_SECRET);
   });
 });

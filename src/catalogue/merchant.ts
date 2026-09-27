@@ -72,8 +72,12 @@ export function findProduct(
 }
 
 export function putProduct(catalogue: MerchantCatalogue, product: MerchantProduct): void {
-  Object.defineProperty(catalogue.products, product.sku, {
-    value: product,
+  defineOwnKey(catalogue.products, product.sku, product);
+}
+
+export function defineOwnKey<T>(record: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(record, key, {
+    value,
     enumerable: true,
     writable: true,
     configurable: true,

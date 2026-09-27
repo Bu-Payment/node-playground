@@ -237,7 +237,7 @@ describe("syncLink", () => {
       ],
     });
 
-    const result = syncLink(local, remote, READ_AT, "price_3");
+    const result = syncLink(local, remote, READ_AT, { defaultPriceId: "price_3" });
 
     expect(result.outcome).toBe("repointed");
     expect(result.product.bupayment?.priceId).toBe("price_3");
@@ -253,9 +253,34 @@ describe("syncLink", () => {
       ],
     });
 
-    expect(syncLink(local, remote, READ_AT, "price_usd").product.bupayment?.priceId).toBe(
-      "price_2",
-    );
+    expect(
+      syncLink(local, remote, READ_AT, { defaultPriceId: "price_usd" }).product.bupayment?.priceId,
+    ).toBe("price_2");
+  });
+
+  it("replaces a linked price the application can no longer use, even though it is active", () => {
+    const local = merchantProduct({ sku: "TICKET", bupayment: link() });
+    const remote = remoteWith({
+      prices: [
+        price({ id: "price_1", productId: "prod_1" }),
+        price({ id: "price_2", productId: "prod_1", unitAmount: 1700 }),
+      ],
+    });
+
+    const result = syncLink(local, remote, READ_AT, { unassignedPriceId: "price_1" });
+
+    expect(result.outcome).toBe("repointed");
+    expect(result.product.bupayment).toMatchObject({ priceId: "price_2", priceAssigned: true });
+  });
+
+  it("marks an unusable linked price unassigned when nothing replaces it", () => {
+    const local = merchantProduct({ sku: "TICKET", bupayment: link() });
+    const remote = remoteWith({ prices: [price({ id: "price_1", productId: "prod_1" })] });
+
+    const result = syncLink(local, remote, READ_AT, { unassignedPriceId: "price_1" });
+
+    expect(result.outcome).toBe("price_needs_decision");
+    expect(result.product.bupayment?.priceAssigned).toBe(false);
   });
 
   it("keeps the newest of two reads of the same resource", () => {

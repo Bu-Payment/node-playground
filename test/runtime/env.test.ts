@@ -6,6 +6,7 @@ import {
   parseEnv,
 } from "../../src/runtime/env";
 import { ConfigurationError } from "../../src/runtime/errors";
+import { WEBHOOK_SECRET } from "../fakes/webhook";
 import { FAKE_SECRET, VALID_ENV } from "../fixtures";
 
 describe("parseEnv", () => {
@@ -49,6 +50,21 @@ describe("parseEnv", () => {
 
     expect(call).toThrow(/BUPAYMENT_APP_ID is missing/);
     expect(call).toThrow(/PORT is invalid/);
+  });
+
+  it("treats the webhook endpoint secret as optional", () => {
+    expect(parseEnv(VALID_ENV).BUPAYMENT_WEBHOOK_SECRET).toBeUndefined();
+    expect(
+      parseEnv({ ...VALID_ENV, BUPAYMENT_WEBHOOK_SECRET: WEBHOOK_SECRET }).BUPAYMENT_WEBHOOK_SECRET,
+    ).toBe(WEBHOOK_SECRET);
+  });
+
+  it("refuses a malformed webhook endpoint secret without repeating it", () => {
+    const malformed = `${WEBHOOK_SECRET.slice(0, 20)}`;
+
+    expect(() => parseEnv({ ...VALID_ENV, BUPAYMENT_WEBHOOK_SECRET: malformed })).toThrow(
+      "Environment is not usable: BUPAYMENT_WEBHOOK_SECRET is invalid",
+    );
   });
 
   it("never repeats a rejected value, so a malformed secret cannot leak", () => {

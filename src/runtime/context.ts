@@ -18,6 +18,7 @@ export interface AppContext {
   readonly client: ClientConfig;
   readonly bupayment: BuPaymentClient;
   readonly catalogue: CatalogueStore;
+  readonly webhookSecret: string | null;
   readonly server: ServerAddress;
   readonly logger: Logger;
 }
@@ -33,6 +34,7 @@ export function createContext(env: Env, logger: Logger, options: ClientOptions =
     client: parseClientConfig(credentials),
     bupayment: createBuPaymentClient(credentials, options),
     catalogue: fileStore(env.CATALOGUE_STORE_PATH),
+    webhookSecret: env.BUPAYMENT_WEBHOOK_SECRET ?? null,
     server: { host: env.HOST, port: env.PORT },
     logger,
   };
