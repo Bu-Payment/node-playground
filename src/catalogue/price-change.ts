@@ -8,7 +8,7 @@ import {
 } from "./merchant";
 import { type CatalogueStore, updateProduct } from "./store";
 
-export type FailedArchive = Extract<PriceChange, { outcome: "archive_failed" }>;
+export type PendingArchive = Exclude<PriceChange, { outcome: "replaced" }>;
 
 export interface OrphanedPrice {
   priceId: string;
@@ -17,7 +17,7 @@ export interface OrphanedPrice {
 }
 
 export type PriceChangeResult =
-  | { changed: true; product: MerchantProduct; archivePending: FailedArchive | null }
+  | { changed: true; product: MerchantProduct; archivePending: PendingArchive | null }
   | { changed: false; reason: "product_not_found" }
   | { changed: false; reason: "product_changed"; orphan: OrphanedPrice | null };
 
@@ -65,7 +65,7 @@ export async function changePrice(
   return {
     changed: true,
     product,
-    archivePending: change.outcome === "archive_failed" ? change : null,
+    archivePending: change.outcome === "replaced" ? null : change,
   };
 }
 

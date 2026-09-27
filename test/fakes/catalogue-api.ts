@@ -8,6 +8,7 @@ export interface CatalogueApi {
   requests: { url: URL; method: string; headers: Record<string, string>; body: unknown }[];
   unassigned: Set<string>;
   failArchive: boolean;
+  failDefaultPrice: boolean;
   fetch: FetchLike;
 }
 
@@ -21,6 +22,7 @@ export function fakeCatalogueApi(
     requests: [],
     unassigned: new Set(),
     failArchive: false,
+    failDefaultPrice: false,
     fetch: async (input, init) => {
       const url = new URL(input);
       const method = init.method ?? "GET";
@@ -33,6 +35,9 @@ export function fakeCatalogueApi(
       });
       if (method === "POST") {
         return write(api, url.pathname, body);
+      }
+      if (method === "PUT") {
+        return moveDefault(api, url.pathname, body);
       }
       const single = /^\/v1\/(products|prices)\/([^/]+)$/.exec(url.pathname);
       if (single !== null) {
@@ -100,6 +105,32 @@ function write(api: CatalogueApi, path: string, body: unknown): Response {
   }
   Object.assign(found, { active: false, updatedAt: WRITTEN_AT });
   return Response.json(found);
+}
+
+function moveDefault(api: CatalogueApi, path: string, body: unknown): Response {
+  const moved = /^\/v1\/products\/([^/]+)\/default-price$/.exec(path);
+  const owner = api.products.find((row) => row.id === decodeURIComponent(moved?.[1] ?? ""));
+  if (moved === null || owner === undefined || api.unassigned.has(owner.id)) {
+    return notFound();
+  }
+  if (api.failDefaultPrice) {
+    return Response.json({ error: "operation_failed", message: "Unavailable" }, { status: 503 });
+  }
+  const { priceId, expectedUpdatedAt } = body as { priceId: string; expectedUpdatedAt?: string };
+  if (!api.prices.some((row) => row.id === priceId && row.productId === owner.id)) {
+    return Response.json(
+      { error: "default_price_not_owned", message: "Not a price of this product" },
+      { status: 409 },
+    );
+  }
+  if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== owner.updatedAt) {
+    return Response.json(
+      { error: "stale_resource", message: "Stale", resource: owner },
+      { status: 409 },
+    );
+  }
+  Object.assign(owner, { defaultPriceId: priceId, updatedAt: WRITTEN_AT });
+  return Response.json(owner);
 }
 
 interface PriceFields {
