@@ -85,6 +85,44 @@ describe("GET /catalogue", () => {
     });
   });
 
+  it("remembers every live price read in a single write", async () => {
+    const api = fakeCatalogueApi({
+      prices: [
+        price({ id: "price_1", productId: "prod_1", unitAmount: 1200 }),
+        price({ id: "price_2", productId: "prod_2", unitAmount: 1300 }),
+      ],
+    });
+    const second = {
+      ...LIVE,
+      sku: "PASS_2",
+      bupayment: link({ productId: "prod_2", priceId: "price_2" }),
+    };
+    const { app, store } = appWith([LIVE, second], api.fetch);
+    let saves = 0;
+    const save = store.save.bind(store);
+    store.save = (catalogue) => {
+      saves += 1;
+      save(catalogue);
+    };
+
+    await request(app).get("/catalogue");
+
+    expect(saves).toBe(1);
+    expect(store.load().products.PASS_2?.pricing).toMatchObject({ lastKnown: { amount: 1300 } });
+  });
+
+  it("does not write when no live price was read", async () => {
+    const { app, store } = appWith([merchantProduct({ sku: "TICKET" })]);
+    let saves = 0;
+    store.save = () => {
+      saves += 1;
+    };
+
+    await request(app).get("/catalogue");
+
+    expect(saves).toBe(0);
+  });
+
   it("falls back to the last known live price when BuPayment is unreachable", async () => {
     const { app } = appWith([LIVE]);
 

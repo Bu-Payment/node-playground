@@ -9,8 +9,7 @@ import {
   putProduct,
 } from "../../catalogue/merchant";
 import { changePrice, type OrphanedPrice } from "../../catalogue/price-change";
-import { updateProduct } from "../../catalogue/store";
-import { buildStorefront, rememberLivePrice } from "../../catalogue/storefront";
+import { buildStorefront, rememberLivePrices } from "../../catalogue/storefront";
 import type { AppContext } from "../../runtime/context";
 import { describeFailure } from "../../runtime/errors";
 
@@ -40,12 +39,7 @@ export function catalogueRoute(context: AppContext): RequestHandler {
     const storefront = await buildStorefront(catalogue, (priceId) =>
       context.bupayment.catalogue.price(priceId).get(),
     );
-    const readAt = new Date().toISOString();
-    for (const read of storefront.reads) {
-      updateProduct(context.catalogue, read.sku, (current) =>
-        rememberLivePrice(current, read, readAt),
-      );
-    }
+    rememberLivePrices(context.catalogue, storefront.reads, new Date().toISOString());
     response.json({ products: storefront.products });
   };
 }

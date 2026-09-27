@@ -1,5 +1,13 @@
 import type { Price } from "@bu-payment/node-sdk";
-import { isSellable, type MerchantCatalogue, type MerchantProduct, pricingFrom } from "./merchant";
+import {
+  findProduct,
+  isSellable,
+  type MerchantCatalogue,
+  type MerchantProduct,
+  pricingFrom,
+  putProduct,
+} from "./merchant";
+import type { CatalogueStore } from "./store";
 
 export type PriceReader = (priceId: string) => Promise<Price>;
 
@@ -87,4 +95,23 @@ export function rememberLivePrice(
     return undefined;
   }
   return { ...current, pricing: pricingFrom("live", read.price, readAt) };
+}
+
+export function rememberLivePrices(
+  store: CatalogueStore,
+  reads: readonly LivePriceRead[],
+  readAt: string,
+): void {
+  if (reads.length === 0) {
+    return;
+  }
+  const catalogue = store.load();
+  for (const read of reads) {
+    const current = findProduct(catalogue, read.sku);
+    const remembered = current === undefined ? undefined : rememberLivePrice(current, read, readAt);
+    if (remembered !== undefined) {
+      putProduct(catalogue, remembered);
+    }
+  }
+  store.save(catalogue);
 }
