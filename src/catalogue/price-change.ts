@@ -1,5 +1,11 @@
 import type { CatalogueClient, Price, PriceChange } from "@bu-payment/node-sdk";
-import { type CatalogueLink, findProduct, type MerchantProduct, pricingFrom } from "./merchant";
+import {
+  type CatalogueLink,
+  findProduct,
+  type MerchantProduct,
+  pointToPrice,
+  pricingFrom,
+} from "./merchant";
 import { type CatalogueStore, updateProduct } from "./store";
 
 export type FailedArchive = Extract<PriceChange, { outcome: "archive_failed" }>;
@@ -30,24 +36,25 @@ export async function changePrice(
   if (link === null) {
     return changeLocalPrice(store, sku, amount);
   }
-  const change = await replacePrice(catalogue, link, amount);
+  const change = await replacePrice(
+    catalogue,
+    link,
+    amount,
+    `price-change:${sku}:${link.priceId}:${link.priceAssignmentAt ?? "unrecorded"}:${amount}`,
+  );
   const readAt = now().toISOString();
   const replacement = change.replacement;
-  const product = updateProduct(store, sku, (current) =>
-    current.bupayment?.priceId !== link.priceId
-      ? undefined
-      : {
-          ...current,
-          pricing: pricingFrom(current.pricing.mode, replacement, readAt),
-          bupayment: {
-            ...current.bupayment,
-            priceId: replacement.id,
-            priceActive: replacement.active,
-            priceAssigned: true,
-            priceUpdatedAt: replacement.updatedAt,
-          },
-        },
-  );
+  const product = updateProduct(store, sku, (current) => {
+    const currentLink = current.bupayment;
+    if (currentLink === null || ![link.priceId, replacement.id].includes(currentLink.priceId)) {
+      return undefined;
+    }
+    return {
+      ...current,
+      pricing: pricingFrom(current.pricing.mode, replacement, readAt),
+      bupayment: pointToPrice(currentLink, replacement, readAt),
+    };
+  });
   if (product === undefined) {
     return {
       changed: false,
@@ -86,9 +93,14 @@ async function replacePrice(
   catalogue: CatalogueClient,
   link: CatalogueLink,
   amount: number,
+  idempotencyKey: string,
 ): Promise<PriceChange> {
   const current: Price = await catalogue.price(link.priceId).get();
-  const draft = catalogue.priceDraft(link.productId).unitAmount(amount).currency(current.currency);
+  const draft = catalogue
+    .priceDraft(link.productId)
+    .idempotencyKey(idempotencyKey)
+    .unitAmount(amount)
+    .currency(current.currency);
   if (current.recurring === null) {
     return await draft.replacing(link.priceId).expectedUpdatedAt(link.priceUpdatedAt).replace();
   }

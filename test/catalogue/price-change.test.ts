@@ -241,6 +241,64 @@ describe("changePrice", () => {
     });
   });
 
+  it("keeps the change when a webhook already moved the link to the new price", async () => {
+    const { api, store, change } = setup(LINKED);
+    const load = store.load.bind(store);
+    let loads = 0;
+    store.load = () => {
+      loads += 1;
+      const catalogue = load();
+      if (loads > 1) {
+        putProduct(catalogue, { ...LINKED, bupayment: link({ priceId: "price_new_3" }) });
+      }
+      return catalogue;
+    };
+
+    const result = await change("TICKET", 1800);
+
+    expect(result.changed).toBe(true);
+    expect(api.prices.find((row) => row.id === "price_new_3")?.active).toBe(true);
+  });
+
+  it("sends the same idempotency key when the same change is retried", async () => {
+    const first = setup(LINKED);
+    const second = setup(LINKED);
+
+    await first.change("TICKET", 1800);
+    await second.change("TICKET", 1800);
+
+    const keyOf = (api: CatalogueApi) =>
+      api.requests.find((request) => request.method === "POST")?.headers[Header.IDEMPOTENCY_KEY];
+    expect(keyOf(first.api)).toBe("price-change:TICKET:price_1:unrecorded:1800");
+    expect(keyOf(second.api)).toBe(keyOf(first.api));
+  });
+
+  it("keeps the currency of the price it replaces", async () => {
+    const api = fakeCatalogueApi({
+      products: [product({ id: "prod_1", defaultPriceId: "price_0" })],
+      prices: [
+        price({ id: "price_0", productId: "prod_1" }),
+        price({ id: "price_1", productId: "prod_1", currency: "USD" }),
+      ],
+    });
+    const { change } = setup(LINKED, api);
+
+    await change("TICKET", 1800);
+
+    expect(api.requests[1]?.body).toMatchObject({ currency: "USD" });
+  });
+
+  it("refuses to edit an unlinked product that has no stored price", async () => {
+    const live = merchantProduct({ sku: "LOCAL", pricing: { mode: "live", lastKnown: null } });
+    const { change } = setup(live);
+
+    expect(await change("LOCAL", 900)).toEqual({
+      changed: false,
+      reason: "product_changed",
+      orphan: null,
+    });
+  });
+
   it("refuses an unknown SKU before calling BuPayment", async () => {
     const { api, change } = setup(LINKED);
 
