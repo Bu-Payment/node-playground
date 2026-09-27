@@ -50,6 +50,7 @@ export function product(overrides: Partial<Product> & Pick<Product, "id">): Prod
   return {
     name: `Product ${overrides.id}`,
     description: null,
+    lookupKey: null,
     active: true,
     createdAt: "2026-09-01T00:00:00.000Z",
     updatedAt: "2026-09-01T00:00:00.000Z",
