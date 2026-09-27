@@ -1,4 +1,5 @@
 import type { CatalogueClient } from "@bu-payment/node-sdk";
+import { collect } from "./collect";
 import { indexRemote, type LinkOutcome, syncLink } from "./link-sync";
 import { putProduct } from "./merchant";
 import type { CatalogueStore } from "./store";
@@ -20,16 +21,16 @@ export async function reconcileCatalogue(
   store: CatalogueStore,
   now: () => Date = () => new Date(),
 ): Promise<ReconcileReport> {
-  const products = await collect([
+  const readAt = now().toISOString();
+  const products = await collect(
     catalogue.products().active(true).all(),
     catalogue.products().active(false).all(),
-  ]);
-  const prices = await collect([
+  );
+  const prices = await collect(
     catalogue.prices().active(true).all(),
     catalogue.prices().active(false).all(),
-  ]);
+  );
   const remote = indexRemote(products, prices);
-  const readAt = now().toISOString();
   const local = store.load();
   const report: ReconcileReport = {
     observed: { products: products.length, prices: prices.length },
@@ -56,14 +57,4 @@ export async function reconcileCatalogue(
     .map((product) => product.id);
   store.save(local);
   return report;
-}
-
-async function collect<T>(walks: AsyncGenerator<T, void, undefined>[]): Promise<T[]> {
-  const items: T[] = [];
-  for (const walk of walks) {
-    for await (const item of walk) {
-      items.push(item);
-    }
-  }
-  return items;
 }

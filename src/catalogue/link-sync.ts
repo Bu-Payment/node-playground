@@ -1,5 +1,14 @@
 import type { Price, Product } from "@bu-payment/node-sdk";
-import { type CatalogueLink, isOlder, type MerchantProduct, pricingFrom } from "./merchant";
+import {
+  type CatalogueLink,
+  isOlder,
+  type MerchantProduct,
+  type PriceTerms,
+  pointToPrice,
+  pricingFrom,
+  termsOfLink,
+  termsOfPrice,
+} from "./merchant";
 
 export interface RemoteCatalogue {
   products: ReadonlyMap<string, Product>;
@@ -44,44 +53,46 @@ export function syncLink(
   }
   const remoteProduct = remote.products.get(link.productId);
   if (remoteProduct === undefined) {
-    return settle(product, { ...link, productAssigned: false }, false);
+    return settle(product, observeProductAssignment(link, false, readAt), false);
   }
   const linkedPrice = remote.prices.get(link.priceId);
   if (isStale(link, remoteProduct, linkedPrice)) {
     return { outcome: "stale", product };
   }
   const observed: CatalogueLink = {
-    ...link,
-    productAssigned: true,
+    ...observeProductAssignment(link, true, readAt),
     productActive: remoteProduct.active,
     productUpdatedAt: remoteProduct.updatedAt,
   };
+  if (linkedPrice === undefined && overtaken(link.priceAssignmentAt, readAt)) {
+    return settle(product, observed, false);
+  }
   const linkedAssigned = linkedPrice !== undefined && options.unassignedPriceId !== linkedPrice.id;
+  const defaultPriceId = options.defaultPriceId ?? remoteProduct.defaultPriceId ?? null;
   const current = currentPrice(
+    link,
     remoteProduct,
     linkedPrice,
     linkedAssigned,
     remote,
-    options.defaultPriceId ?? null,
+    defaultPriceId,
   );
   if (current === undefined) {
     const awaitingPriceDecision = remoteProduct.active;
     return settle(
       product,
-      withLinkedPrice(observed, linkedPrice, linkedAssigned),
+      withLinkedPrice(observed, linkedPrice, linkedAssigned, readAt),
       awaitingPriceDecision,
     );
   }
+  const bupayment =
+    current.id === link.priceId
+      ? withLinkedPrice(observed, current, true, readAt)
+      : pointToPrice(observed, current, readAt);
   const next: MerchantProduct = {
     ...product,
     pricing: pricingFrom(product.pricing.mode, current, readAt),
-    bupayment: {
-      ...observed,
-      priceId: current.id,
-      priceActive: true,
-      priceAssigned: true,
-      priceUpdatedAt: current.updatedAt,
-    },
+    bupayment,
   };
   return { outcome: outcomeOf(product, next), product: next };
 }
@@ -90,16 +101,47 @@ function withLinkedPrice(
   link: CatalogueLink,
   linked: Price | undefined,
   assigned: boolean,
+  observedAt: string,
 ): CatalogueLink {
   if (linked === undefined || !assigned) {
-    return { ...link, priceAssigned: false };
+    return observePriceAssignment(link, false, observedAt);
   }
+  const terms = termsOfPrice(linked);
   return {
-    ...link,
-    priceAssigned: true,
+    ...observePriceAssignment(link, true, observedAt),
     priceActive: linked.active,
     priceUpdatedAt: linked.updatedAt,
+    priceCurrency: terms.currency,
+    priceType: terms.type,
+    priceInterval: terms.interval,
+    priceIntervalCount: terms.intervalCount,
   };
+}
+
+function observeProductAssignment(
+  link: CatalogueLink,
+  assigned: boolean,
+  observedAt: string,
+): CatalogueLink {
+  if (overtaken(link.productAssignmentAt, observedAt) || link.productAssigned === assigned) {
+    return link;
+  }
+  return { ...link, productAssigned: assigned, productAssignmentAt: observedAt };
+}
+
+function observePriceAssignment(
+  link: CatalogueLink,
+  assigned: boolean,
+  observedAt: string,
+): CatalogueLink {
+  if (overtaken(link.priceAssignmentAt, observedAt) || link.priceAssigned === assigned) {
+    return link;
+  }
+  return { ...link, priceAssigned: assigned, priceAssignmentAt: observedAt };
+}
+
+function overtaken(lastAssignmentAt: string | null, observedAt: string): boolean {
+  return lastAssignmentAt !== null && isOlder(observedAt, lastAssignmentAt);
 }
 
 function settle(
@@ -149,24 +191,26 @@ function comparable(product: MerchantProduct) {
 }
 
 function currentPrice(
+  link: CatalogueLink,
   product: Product,
   linked: Price | undefined,
   linkedAssigned: boolean,
   remote: RemoteCatalogue,
   defaultPriceId: string | null,
 ): Price | undefined {
-  if (linked === undefined) {
-    return undefined;
-  }
-  if (linked.active && linkedAssigned) {
+  if (linked?.active === true && linkedAssigned) {
     return linked;
+  }
+  const terms = linked === undefined ? termsOfLink(link) : termsOfPrice(linked);
+  if (terms === undefined) {
+    return undefined;
   }
   const candidates = [...remote.prices.values()].filter(
     (price) =>
-      price.id !== linked.id &&
+      price.id !== link.priceId &&
       price.productId === product.id &&
       price.active &&
-      interchangeable(price, linked),
+      interchangeable(termsOfPrice(price), terms),
   );
   const preferred = candidates.find((price) => price.id === defaultPriceId);
   if (preferred !== undefined) {
@@ -175,12 +219,12 @@ function currentPrice(
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
-function interchangeable(candidate: Price, linked: Price): boolean {
+function interchangeable(candidate: PriceTerms, linked: PriceTerms): boolean {
   return (
     candidate.currency === linked.currency &&
     candidate.type === linked.type &&
-    candidate.recurring?.interval === linked.recurring?.interval &&
-    candidate.recurring?.intervalCount === linked.recurring?.intervalCount
+    candidate.interval === linked.interval &&
+    candidate.intervalCount === linked.intervalCount
   );
 }
 

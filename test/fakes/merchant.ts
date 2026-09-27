@@ -28,6 +28,10 @@ export function link(overrides: Partial<CatalogueLink> = {}): CatalogueLink {
     priceUpdatedAt: OBSERVED,
     productAssignmentAt: null,
     priceAssignmentAt: null,
+    priceCurrency: "EUR",
+    priceType: "one_time",
+    priceInterval: null,
+    priceIntervalCount: null,
     ...overrides,
   };
 }

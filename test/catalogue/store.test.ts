@@ -77,6 +77,10 @@ describe("fileStore", () => {
       priceUpdatedAt: "2026-09-01T00:00:00.000Z",
       productAssignmentAt: null,
       priceAssignmentAt: null,
+      priceCurrency: null,
+      priceType: null,
+      priceInterval: null,
+      priceIntervalCount: null,
     });
   });
 

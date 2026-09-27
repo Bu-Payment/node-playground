@@ -1,4 +1,4 @@
-import type { Price } from "@bu-payment/node-sdk";
+import type { Price, PriceInterval } from "@bu-payment/node-sdk";
 import { z } from "zod";
 
 export const MoneySchema = z.object({
@@ -24,6 +24,10 @@ const LinkFactsSchema = z.object({
   priceUpdatedAt: z.string(),
   productAssignmentAt: z.string().nullable().default(null),
   priceAssignmentAt: z.string().nullable().default(null),
+  priceCurrency: z.string().nullable().default(null),
+  priceType: z.enum(["one_time", "recurring"]).nullable().default(null),
+  priceInterval: z.enum(["day", "week", "month", "year"]).nullable().default(null),
+  priceIntervalCount: z.number().int().nullable().default(null),
 });
 
 const CatalogueLinkSchema = z.preprocess(withoutLegacySellable, LinkFactsSchema);
@@ -108,4 +112,53 @@ function withoutLegacySellable(value: unknown): unknown {
   return sellable === false && !("productActive" in link)
     ? { ...link, productActive: false }
     : link;
+}
+
+export interface PriceTerms {
+  currency: string;
+  type: Price["type"];
+  interval: PriceInterval | null;
+  intervalCount: number | null;
+}
+
+export function termsOfPrice(price: Price): PriceTerms {
+  return {
+    currency: price.currency,
+    type: price.type,
+    interval: price.recurring?.interval ?? null,
+    intervalCount: price.recurring?.intervalCount ?? null,
+  };
+}
+
+export function termsOfLink(link: CatalogueLink): PriceTerms | undefined {
+  if (link.priceCurrency === null || link.priceType === null) {
+    return undefined;
+  }
+  return {
+    currency: link.priceCurrency,
+    type: link.priceType,
+    interval: link.priceInterval,
+    intervalCount: link.priceIntervalCount,
+  };
+}
+
+export type ProductFacts = Pick<
+  CatalogueLink,
+  "productId" | "productActive" | "productAssigned" | "productUpdatedAt" | "productAssignmentAt"
+>;
+
+export function pointToPrice(link: ProductFacts, price: Price, observedAt: string): CatalogueLink {
+  const terms = termsOfPrice(price);
+  return {
+    ...link,
+    priceId: price.id,
+    priceActive: price.active,
+    priceAssigned: true,
+    priceUpdatedAt: price.updatedAt,
+    priceAssignmentAt: observedAt,
+    priceCurrency: terms.currency,
+    priceType: terms.type,
+    priceInterval: terms.interval,
+    priceIntervalCount: terms.intervalCount,
+  };
 }

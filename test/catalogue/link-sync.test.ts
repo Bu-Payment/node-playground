@@ -283,6 +283,117 @@ describe("syncLink", () => {
     expect(result.product.bupayment?.priceAssigned).toBe(false);
   });
 
+  it("keeps an unassignment that happened after the sweep started", () => {
+    const local = merchantProduct({
+      sku: "TICKET",
+      bupayment: link({ productAssigned: false, productAssignmentAt: "2026-09-26T12:30:00Z" }),
+    });
+
+    const result = syncLink(local, remoteWith({}), READ_AT);
+
+    expect(result.product.bupayment).toMatchObject({ productAssigned: false });
+    expect(isSellable(result.product.bupayment)).toBe(false);
+  });
+
+  it("keeps an assignment that happened after the sweep started", () => {
+    const local = merchantProduct({
+      sku: "TICKET",
+      bupayment: link({ productAssignmentAt: "2026-09-26T12:30:00Z" }),
+    });
+
+    const result = syncLink(local, indexRemote([], []), READ_AT);
+
+    expect(result.product.bupayment?.productAssigned).toBe(true);
+  });
+
+  it("records when it observed an assignment change", () => {
+    const local = merchantProduct({ sku: "TICKET", bupayment: link() });
+
+    const result = syncLink(local, indexRemote([], []), READ_AT);
+
+    expect(result.product.bupayment).toMatchObject({
+      productAssigned: false,
+      productAssignmentAt: READ_AT,
+    });
+  });
+
+  it("uses the default price the product read carries", () => {
+    const local = merchantProduct({ sku: "TICKET", bupayment: link() });
+    const remote = remoteWith({
+      products: [product({ id: "prod_1", defaultPriceId: "price_3" })],
+      prices: [
+        price({ id: "price_1", productId: "prod_1", active: false, updatedAt: LATER }),
+        price({ id: "price_2", productId: "prod_1" }),
+        price({ id: "price_3", productId: "prod_1", unitAmount: 2000 }),
+      ],
+    });
+
+    expect(syncLink(local, remote, READ_AT).product.bupayment?.priceId).toBe("price_3");
+  });
+
+  it("replaces a linked price it can no longer read, using the terms the link recorded", () => {
+    const local = merchantProduct({ sku: "TICKET", bupayment: link({ priceAssigned: false }) });
+    const remote = remoteWith({
+      prices: [
+        price({ id: "price_2", productId: "prod_1", unitAmount: 1700 }),
+        price({ id: "price_usd", productId: "prod_1", currency: "USD" }),
+      ],
+    });
+
+    const result = syncLink(local, remote, READ_AT);
+
+    expect(result.outcome).toBe("repointed");
+    expect(result.product.bupayment).toMatchObject({
+      priceId: "price_2",
+      priceAssigned: true,
+      priceAssignmentAt: READ_AT,
+      priceCurrency: "EUR",
+    });
+  });
+
+  it("asks for a decision when the link recorded no terms and the price is gone", () => {
+    const local = merchantProduct({
+      sku: "TICKET",
+      bupayment: link({ priceCurrency: null, priceType: null }),
+    });
+    const remote = remoteWith({ prices: [price({ id: "price_2", productId: "prod_1" })] });
+
+    expect(syncLink(local, remote, READ_AT).outcome).toBe("price_needs_decision");
+  });
+
+  it("does not repoint away from a price reassigned after the sweep started", () => {
+    const local = merchantProduct({
+      sku: "TICKET",
+      bupayment: link({ priceAssigned: true, priceAssignmentAt: "2026-09-26T12:30:00Z" }),
+    });
+    const remote = remoteWith({ prices: [price({ id: "price_2", productId: "prod_1" })] });
+
+    const result = syncLink(local, remote, READ_AT);
+
+    expect(result.product.bupayment).toMatchObject({
+      priceId: "price_1",
+      priceAssigned: true,
+      priceAssignmentAt: "2026-09-26T12:30:00Z",
+    });
+  });
+
+  it("records the terms of the price it repoints to", () => {
+    const local = merchantProduct({ sku: "TICKET", bupayment: link() });
+    const remote = remoteWith({
+      prices: [
+        price({ id: "price_1", productId: "prod_1", active: false, updatedAt: LATER }),
+        price({ id: "price_2", productId: "prod_1" }),
+      ],
+    });
+
+    expect(syncLink(local, remote, READ_AT).product.bupayment).toMatchObject({
+      priceId: "price_2",
+      priceAssignmentAt: READ_AT,
+      priceCurrency: "EUR",
+      priceType: "one_time",
+    });
+  });
+
   it("keeps the newest of two reads of the same resource", () => {
     const remote = indexRemote(
       [

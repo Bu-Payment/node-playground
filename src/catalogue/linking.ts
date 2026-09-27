@@ -1,5 +1,11 @@
 import type { CatalogueClient } from "@bu-payment/node-sdk";
-import { findProduct, type MerchantProduct, type PricingMode, pricingFrom } from "./merchant";
+import {
+  findProduct,
+  type MerchantProduct,
+  type PricingMode,
+  pointToPrice,
+  pricingFrom,
+} from "./merchant";
 import { type CatalogueStore, updateProduct } from "./store";
 
 export interface LinkRequest {
@@ -37,18 +43,17 @@ export async function linkProduct(
   const linked = updateProduct(store, sku, (current) => ({
     ...current,
     pricing: pricingFrom(request.pricing, price, readAt),
-    bupayment: {
-      productId: product.id,
-      priceId: price.id,
-      productActive: true,
-      priceActive: true,
-      productAssigned: true,
-      priceAssigned: true,
-      productUpdatedAt: product.updatedAt,
-      priceUpdatedAt: price.updatedAt,
-      productAssignmentAt: null,
-      priceAssignmentAt: null,
-    },
+    bupayment: pointToPrice(
+      {
+        productId: product.id,
+        productActive: product.active,
+        productAssigned: true,
+        productUpdatedAt: product.updatedAt,
+        productAssignmentAt: readAt,
+      },
+      price,
+      readAt,
+    ),
   }));
   return linked === undefined
     ? { linked: false, reason: "product_not_found" }

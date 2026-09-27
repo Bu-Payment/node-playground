@@ -101,6 +101,22 @@ describe("reconcileCatalogue", () => {
     expect((await reconcile(api, store)).unlinked).toEqual(["prod_new"]);
   });
 
+  it("takes the time it started as the observation time", async () => {
+    const store = storeWith(merchantProduct({ sku: "TICKET", bupayment: link() }));
+    let calls = 0;
+    const clock = () => {
+      calls += 1;
+      return new Date(calls === 1 ? "2026-09-26T12:00:00.000Z" : "2026-09-26T13:00:00.000Z");
+    };
+    const client = testContext({}, { fetch: fakeCatalogueApi().fetch }).context.bupayment.catalogue;
+
+    await reconcileCatalogue(client, store, clock);
+
+    expect(store.load().products.TICKET?.bupayment?.productAssignmentAt).toBe(
+      "2026-09-26T12:00:00.000Z",
+    );
+  });
+
   it("leaves the catalogue untouched when a page fails part-way through", async () => {
     const store = storeWith(merchantProduct({ sku: "TICKET", bupayment: link() }));
     const before = store.load();

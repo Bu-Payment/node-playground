@@ -55,6 +55,19 @@ describe("linkProduct", () => {
     });
   });
 
+  it("records the link time as the assignment time, so an older unassignment is discarded", async () => {
+    const { store, link } = setup();
+
+    await link("TICKET", { productId: "prod_1", priceId: "price_1", pricing: "stored" });
+
+    expect(store.load().products.TICKET?.bupayment).toMatchObject({
+      productAssignmentAt: LINKED_AT.toISOString(),
+      priceAssignmentAt: LINKED_AT.toISOString(),
+      priceCurrency: "EUR",
+      priceType: "one_time",
+    });
+  });
+
   it("links a live product with the price it just read as last known", async () => {
     const { store, link } = setup();
 
