@@ -14,16 +14,18 @@ one careless import away from shipping the secret to every visitor.
 ## Status
 
 The playground keeps its own product catalogue, in its own shape, and links each product to a
-BuPayment product and price by reference. See [Catalogue](#catalogue).
+BuPayment product and price by reference. It follows BuPayment through a reconciliation sweep and
+catalogue webhooks, and changes a linked price through BuPayment first. See [Catalogue](#catalogue).
 
-Three parts wait on work in other repositories. They are left out rather than simulated:
+Two follow-ups wait on the SDK ([node-sdk#24](https://github.com/Bu-Payment/node-sdk/issues/24)) and
+are left out rather than simulated:
 
-- **Receiving catalogue webhooks** waits on typed events in the SDK
-  ([node-sdk#21](https://github.com/Bu-Payment/node-sdk/issues/21)).
-- **Changing the price of a linked product** waits on catalogue writes in the SDK
-  ([node-sdk#18](https://github.com/Bu-Payment/node-sdk/issues/18)).
-- **Handling a `409 price_changed` at checkout** waits on the charge-time price assertion
-  ([api#444](https://github.com/Bu-Payment/api/issues/444)).
+- **The default price in the sweep.** Product reads carry `defaultPriceId` since
+  [api#446](https://github.com/Bu-Payment/api/issues/446), but the SDK's `Product` does not expose it
+  yet, so the sweep falls back to the only compatible price. Webhooks already use it.
+- **Asserting the displayed price at checkout.** The API refuses a charge at an amount the customer
+  did not see since [api#444](https://github.com/Bu-Payment/api/issues/444), but the SDK builders
+  cannot send the assertion yet. The playground has no checkout route either.
 
 ## Run locally
 
@@ -48,7 +50,8 @@ The server listens on <http://127.0.0.1:9003>. Port 9003 avoids the API on 3000,
 
 ## Configuration
 
-Every variable is required except `HOST`, `PORT` and `CATALOGUE_STORE_PATH`. Boot happens in two stages, and the error you
+Every variable is required except `HOST`, `PORT`, `CATALOGUE_STORE_PATH` and
+`BUPAYMENT_WEBHOOK_SECRET`. Boot happens in two stages, and the error you
 get says which stage failed. First the environment is checked for shape: a missing or malformed
 variable aborts with one message naming every offending variable at once, in alphabetical order.
 Only then does the SDK check the credentials themselves, and that check stops at the first problem
@@ -75,6 +78,8 @@ live by configuration alone.
 | `GET /catalogue` | The storefront: the merchant's products with their price |
 | `POST /products` | Creates a local, unlinked product |
 | `PUT /products/:sku/link` | Links a local product to a BuPayment product and price |
+| `PUT /products/:sku/price` | Changes a price; a linked one changes in BuPayment first |
+| `POST /webhooks/bupayment` | Receives BuPayment catalogue events |
 
 Anything else answers `404 route_not_found`. A request body is parsed as JSON up to 64kb; a malformed
 body answers `400 request_invalid` and one above the limit answers `413 request_invalid`. A failure
@@ -85,8 +90,10 @@ about the failure reaches the caller.
 | --- | --- |
 | `POST /products` | `422 product_invalid`, `409 product_exists` |
 | `PUT /products/:sku/link` | `422 link_invalid`, `404 product_not_found` (local SKU), `422 price_not_of_product`, `422 inactive`; a BuPayment ID this application cannot see surfaces as the SDK's `404 resource_not_found` |
+| `PUT /products/:sku/price` | `422 price_invalid` (an amount only; the currency never changes), `404 product_not_found`, `409 product_changed` |
+| `POST /webhooks/bupayment` | `503 webhook_not_configured`, `400` with the SDK's `webhook_*` code for a refused delivery |
 
-The write routes have no authorization. That is acceptable only because the playground binds to
+The merchant write routes have no authorization. That is acceptable only because the playground binds to
 `127.0.0.1` by default; do not expose it on another interface.
 
 ## Catalogue
@@ -102,8 +109,10 @@ Each merchant models its products however its application needs. The playground'
 Nothing forces a merchant to mirror BuPayment's fields.
 
 A linked product also carries `bupayment`: the `productId` and `priceId` it sells through, whether
-BuPayment can currently sell it (`sellable`), and the product and price `updatedAt` last applied.
-Apart from the amount in `stored` mode, nothing else is copied from BuPayment.
+that product and price are active and assigned to this application, the product and price
+`updatedAt` last applied, and the time of the last assignment change seen for each. A product is
+sellable when all four are true. Apart from the amount in `stored` mode, nothing else is copied from
+BuPayment.
 
 ### Two price modes, chosen per product
 
@@ -119,7 +128,7 @@ An unlinked product keeps a local price and is not sellable through BuPayment.
 
 The price of a linked product changes only in BuPayment: from the dashboard, or from the
 application through the SDK, which creates a new price and returns its ID. It is never edited
-locally. That rule is what makes the merchant's copy a copy: it can lag, and reconciliation pulls
+locally; `PUT /products/:sku/price` does it in that order (see [Changing a price](#changing-a-price)). That rule is what makes the merchant's copy a copy: it can lag, and reconciliation pulls
 the lag, but it can never be the side that changed first. A price shown late is caught at charge
 time by [api#444](https://github.com/Bu-Payment/api/issues/444), so a difference does not block a
 sale.
@@ -147,15 +156,13 @@ the command exits `1`. For each linked product:
   product that can be sold again becomes sellable. A `live` product only refreshes its last known
   value, which is not reported as a change.
 - An archived product is **archived** and a product this application can no longer see is
-  **withdrawn**. Both become unsellable, and are reported when the product stops being sellable.
-- An archived price is replaced by the only active price of the same product with the same currency,
-  type and recurrence (**repointed**). With none or several, or when the linked price is no longer
+  **withdrawn**. Both become unsellable, and are reported when that change happens.
+- An archived price is replaced by the product's default price when it is compatible, otherwise by the
+  only active price of the same product with the same currency, type and recurrence (**repointed**). With none or several, or when the linked price is no longer
   visible at all, the link keeps its IDs but becomes unsellable, and is reported as
   **price_needs_decision** on every sweep until someone chooses.
 
-The sweep also lists active BuPayment products no local product links to. The product's
-`defaultPriceId` will become the first choice for a replacement once product reads carry it
-([api#446](https://github.com/Bu-Payment/api/issues/446)).
+The sweep also lists active BuPayment products no local product links to.
 
 Two limits are accepted for a reference consumer. The JSON store has no lock, so a request that
 writes while a sweep is between loading and saving is overwritten by the sweep. And a product
@@ -164,13 +171,42 @@ sweep.
 
 The compiled equivalent is `bun run build && bun run start:reconcile`.
 
-### Not yet here
+### Changing a price
 
-`POST /webhooks/bupayment` will be mounted with a raw-body parser ahead of the global JSON parser,
+`PUT /products/:sku/price` with `{ amount }`. For an unlinked product the local price changes. For
+a linked product, in order:
+
+1. The current BuPayment price is read, to keep its type and recurrence.
+2. The SDK creates the replacement and then archives the old price, sending the `updatedAt` last
+   seen so a price changed meanwhile is not archived blindly.
+3. Only then does the merchant's copy and the link move to the new price.
+
+If the archive fails, the link still moves to the new price and the response says
+`archivePending: true`; the old price stays active in BuPayment until someone archives it, and the
+failure is logged. If the product changed while this ran, nothing is applied locally, the unused new
+price is archived, and the request answers `409 product_changed`.
+
+### Webhooks
+
+Set `BUPAYMENT_WEBHOOK_SECRET` to the `whsec_` value issued for the endpoint, and subscribe the
+endpoint to the `catalogue.*` events.
+
+`POST /webhooks/bupayment` is mounted with a raw-body parser ahead of the global JSON parser,
 because the signature covers `${timestamp}.${rawBody}` and re-serializing a parsed body does not
-reproduce those bytes. Deliveries will be deduplicated on `x-webhook-id` and events on the envelope
-`id`, and applied through the same rules as the sweep. Assignment events order by `occurredAt`
-rather than `updatedAt`.
+reproduce those bytes. The SDK verifies the signature and the timestamp window and returns a typed
+event; a type it does not know is recorded and ignored.
+
+- **Deduplication.** Retries are recognized by `x-webhook-id` and the same event through another
+  endpoint by the envelope `id`. Both are recorded in the same write that applies the event, so an
+  event is never marked as seen without being applied, or applied twice. The playground keeps these
+  ids forever; a real store needs to expire them.
+- **Ordering.** Product and price changes order by the resource `updatedAt`, assignment and
+  unassignment by `occurredAt`. An older event is discarded.
+- **Replacing a price.** When the linked price is archived or unassigned, the product and its prices
+  are read from BuPayment and the link moves to the default price or the only compatible one, under
+  the same rules as the sweep. If a newer delivery changed the link during that read, the result is
+  dropped. If the read fails, the product stays unsellable until the next sweep; the delivery is
+  still acknowledged, since retrying it would not help.
 
 ## Secret handling
 
@@ -186,8 +222,8 @@ the sweep, on configuration, logs the validation message, which names the rule a
 response that each quote the secret, a reconciliation that cannot start because the secret is
 malformed, and the failure paths of the catalogue routes, and asserts the secret appears in none of
 the captured log lines or responses. A live price read that fails quoting the secret is covered too.
-The webhook endpoint secret joins that test when the webhook route lands; until then the playground
-does not read one.
+The webhook endpoint secret is covered the same way: a valid delivery, a forged signature and a body
+quoting the secret leave it in no log line or response.
 
 ## Layout
 
