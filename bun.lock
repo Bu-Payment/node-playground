@@ -5,7 +5,7 @@
     "": {
       "name": "@bu-payment/node-playground",
       "dependencies": {
-        "@bu-payment/node-sdk": "github:Bu-Payment/node-sdk#77d8f41",
+        "@bu-payment/node-sdk": "github:Bu-Payment/node-sdk#eadc6a4",
         "express": "^5.1.0",
         "zod": "^4.1.12",
       },
@@ -53,7 +53,7 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.3.11", "", { "os": "win32", "cpu": "x64" }, "sha512-43VrG813EW+b5+YbDbz31uUsheX+qFKCpXeY9kfdAx+ww3naKxeVkTD9zLIWxUPfJquANMHrmW3wbe/037G0Qg=="],
 
-    "@bu-payment/node-sdk": ["@bu-payment/node-sdk@github:Bu-Payment/node-sdk#77d8f41", {}, "Bu-Payment-node-sdk-77d8f41", "sha512-qAlVLrzuCzjKxnQ/1cb7wlr6DZiDC1nb8Gp1U1mX83pBJRvYoYM2XIKXwZMk0VfKwBgqPs6ViO7G21MPx60jHQ=="],
+    "@bu-payment/node-sdk": ["@bu-payment/node-sdk@github:Bu-Payment/node-sdk#eadc6a4", {}, "Bu-Payment-node-sdk-eadc6a4", "sha512-GCUjmDP3S/AL99QFVd9fCcUe0BWMHRZs57Lhm92L2x6xaLdyNXgUZZl84cKogSev4QAX/646kLf4v94yO/rlKw=="],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.25.12", "", { "os": "aix", "cpu": "ppc64" }, "sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA=="],
 
