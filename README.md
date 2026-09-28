@@ -253,10 +253,11 @@ the provider; when they differ it refuses the charge, and the playground answers
 `current` is `null` when the API does not return the canonical price. Nothing is charged and the
 stock does not move.
 
-The customer is found by email, or created when none has it. A payment answered `succeeded` takes
-one unit off the local stock; any other status leaves it, and a payment that settles later does not
-reach the stock, since the playground does not consume payment events. A product with no stock left
-answers `409 out_of_stock` before BuPayment is called. There is no quantity: the API takes one
+The customer is found by email, or created when none has it. One unit is reserved before BuPayment
+is called, so two checkouts racing for the last unit cannot both be charged; a product with no stock
+left answers `409 out_of_stock`. The unit stays sold when the payment is answered `succeeded` and goes
+back to the stock on any other status or failure. A payment that settles later does not reach the
+stock, since the playground does not consume payment events. There is no quantity: the API takes one
 canonical price per payment.
 
 The credential needs `payments:write`, `customers:read` and `customers:write` on top of the

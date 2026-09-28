@@ -42,20 +42,17 @@ export async function sell(
   if (shown === null) {
     return { sold: false, reason: "price_unknown" };
   }
-  if (product.stock === 0) {
+  const reserved = updateProduct(store, product.sku, (current) =>
+    current.stock > 0 ? { ...current, stock: current.stock - 1 } : undefined,
+  );
+  if (reserved === undefined) {
     return { sold: false, reason: "out_of_stock" };
   }
-  const customer = await customerFor(bupayment.customers, order.email);
   let payment: Payment;
   try {
-    payment = await bupayment.payments
-      .draft()
-      .customerId(customer.id)
-      .priceId(link.priceId)
-      .expectedPrice({ unitAmount: shown.amount, currency: shown.currency })
-      .reference(product.sku)
-      .create();
+    payment = await charge(bupayment, order.email, link.priceId, shown, product.sku);
   } catch (error) {
+    release(store, product.sku);
     if (error instanceof BuPaymentError && error.code === ErrorCode.PRICE_CHANGED) {
       const current = error.price;
       return {
@@ -68,7 +65,25 @@ export async function sell(
     }
     throw error;
   }
-  return { sold: true, payment, stock: settleStock(store, product, payment) };
+  const stock = payment.status === "succeeded" ? reserved.stock : release(store, product.sku);
+  return { sold: true, payment, stock };
+}
+
+async function charge(
+  bupayment: Pick<BuPaymentClient, "customers" | "payments">,
+  email: string,
+  priceId: string,
+  shown: Money,
+  sku: string,
+): Promise<Payment> {
+  const customer = await customerFor(bupayment.customers, email);
+  return bupayment.payments
+    .draft()
+    .customerId(customer.id)
+    .priceId(priceId)
+    .expectedPrice({ unitAmount: shown.amount, currency: shown.currency })
+    .reference(sku)
+    .create();
 }
 
 function shownPrice(product: MerchantProduct): Money | null {
@@ -80,13 +95,10 @@ function shownPrice(product: MerchantProduct): Money | null {
   return last === null ? null : { amount: last.amount, currency: last.currency };
 }
 
-function settleStock(store: CatalogueStore, sold: MerchantProduct, payment: Payment): number {
-  if (payment.status !== "succeeded") {
-    return sold.stock;
-  }
-  const updated = updateProduct(store, sold.sku, (current) => ({
+function release(store: CatalogueStore, sku: string): number {
+  const restored = updateProduct(store, sku, (current) => ({
     ...current,
-    stock: Math.max(current.stock - 1, 0),
+    stock: current.stock + 1,
   }));
-  return updated?.stock ?? 0;
+  return restored?.stock ?? 0;
 }

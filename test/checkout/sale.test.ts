@@ -80,6 +80,29 @@ describe("sell", () => {
     expect(store.load().products.TSHIRT?.stock).toBe(3);
   });
 
+  it("never sells the last unit twice when two checkouts race", async () => {
+    const { api, store, sell: sale } = setup(merchantProduct({ ...STORED, stock: 1 }));
+
+    const results = await Promise.all([sale("TSHIRT"), sale("TSHIRT")]);
+
+    expect(results.map((result) => (result.sold ? "sold" : result.reason)).sort()).toEqual([
+      "out_of_stock",
+      "sold",
+    ]);
+    expect(api.payments).toHaveLength(1);
+    expect(store.load().products.TSHIRT?.stock).toBe(0);
+  });
+
+  it("gives the unit back when BuPayment fails", async () => {
+    const api = fakePaymentsApi();
+    api.failure = Response.json({ error: "operation_failed", message: "Down" }, { status: 503 });
+    const { store, sell: sale } = setup(STORED, api);
+
+    await expect(sale("TSHIRT")).rejects.toMatchObject({ status: 503 });
+
+    expect(store.load().products.TSHIRT?.stock).toBe(3);
+  });
+
   it("reuses the customer that already has the email", async () => {
     const api = fakePaymentsApi();
     const { sell: sale } = setup(STORED, api);
