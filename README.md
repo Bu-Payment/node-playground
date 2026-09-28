@@ -17,10 +17,9 @@ The playground keeps its own product catalogue, in its own shape, and links each
 BuPayment product and price by reference. It follows BuPayment through a reconciliation sweep and
 catalogue webhooks, and changes a linked price through BuPayment first. See [Catalogue](#catalogue).
 
-One thing is left out rather than simulated: **a checkout that asserts the displayed price.** The
-API and the SDK can refuse a charge at an amount the customer did not see
-([api#444](https://github.com/Bu-Payment/api/issues/444)), but this playground has no checkout
-route; that is outside the catalogue synchronization it demonstrates.
+It sells a linked product at the price the storefront displayed, and BuPayment refuses the charge
+when the canonical price changed since ([api#444](https://github.com/Bu-Payment/api/issues/444)).
+See [Checkout](#checkout).
 
 ## Run locally
 
@@ -74,19 +73,23 @@ live by configuration alone.
 | `POST /products` | Creates a local, unlinked product |
 | `PUT /products/:sku/link` | Links a local product to a BuPayment product and price |
 | `PUT /products/:sku/price` | Changes a price; a linked one changes in BuPayment first |
+| `POST /checkout` | Sells one unit of a linked product at the displayed price |
 | `POST /webhooks/bupayment` | Receives BuPayment catalogue events |
 
 Anything else answers `404 route_not_found`. A request body is parsed as JSON up to 64kb, except the
 webhook, which reads up to 256kb of raw bytes; a malformed body answers `400 request_invalid` and one
 above the limit answers `413 request_invalid`. A failure
 the playground does not recognize answers `500 internal_error` with a fixed message, so nothing
-about the failure reaches the caller.
+about the failure reaches the caller. A BuPayment failure keeps the SDK's code and its status, or
+`502` when that status is not an error status, but never the API's message, which can quote whatever
+the request carried.
 
 | Route | Failure |
 | --- | --- |
 | `POST /products` | `422 product_invalid`, `409 product_exists` |
 | `PUT /products/:sku/link` | `422 link_invalid`, `404 product_not_found` (local SKU), `422 price_not_of_product`, `422 inactive`; a BuPayment ID this application cannot see surfaces as the SDK's `404 resource_not_found` |
 | `PUT /products/:sku/price` | `422 price_invalid` (an amount only; the currency never changes), `404 product_not_found`, `409 product_changed`; a failure reading or creating the BuPayment price surfaces as the SDK's status and code |
+| `POST /checkout` | `422 checkout_invalid`, `404 product_not_found`, `409 not_sellable`, `409 price_unknown`, `409 out_of_stock`, `409 price_changed`; any other failure creating the customer or the payment surfaces as the SDK's status and code |
 | `POST /webhooks/bupayment` | `503 webhook_not_configured`, `400` with the SDK's `webhook_*` code for a refused delivery |
 
 The merchant routes have no authorization. That is acceptable only because the playground binds to
@@ -224,6 +227,42 @@ event; a type it does not know is recorded and ignored.
 - **New products.** An assignment for a BuPayment product that no local SKU links to is reported, so
   the merchant can link it.
 
+## Checkout
+
+`POST /checkout` with `{ sku, email }` sells one unit. The Node SDK's only hosted checkout is for
+subscriptions, so a one-time product is sold with a direct payment:
+`payments.draft().customerId().priceId().expectedPrice().create()`, which is `POST /v1/payments`.
+The public checkout a browser uses needs a publishable key and a browser session, and lives in the
+[browser playground](https://github.com/Bu-Payment/playground).
+
+The expected price is the one the storefront displayed, read from the merchant's catalogue and never
+from BuPayment: the `stored` amount, or for a `live` product the `lastKnown` value that
+`GET /catalogue` records each time it reads the price. A `live` product never displayed answers
+`409 price_unknown`. BuPayment compares the expected price with the canonical one before it reaches
+the provider; when they differ it refuses the charge, and the playground answers:
+
+```json
+{
+  "code": "price_changed",
+  "message": "The price changed since it was shown. Reload the catalogue and try again.",
+  "shown": { "amount": 2750, "currency": "EUR" },
+  "current": { "amount": 3000, "currency": "EUR" }
+}
+```
+
+`current` is `null` when the API does not return the canonical price. Nothing is charged and the
+stock does not move.
+
+The customer is found by email, or created when none has it. A payment answered `succeeded` takes
+one unit off the local stock; any other status leaves it, and a payment that settles later does not
+reach the stock, since the playground does not consume payment events. A product with no stock left
+answers `409 out_of_stock` before BuPayment is called. There is no quantity: the API takes one
+canonical price per payment.
+
+The credential needs `payments:write`, `customers:read` and `customers:write` on top of the
+catalogue capabilities. The provider has to support direct charges; one that only offers a hosted
+one-time checkout refuses the payment, and the SDK's code and status reach the caller as they are.
+
 ## Secret handling
 
 The confidential secret never reaches a log line, an HTTP response body, an error message, or error
@@ -236,7 +275,7 @@ because an API error body or a network error can quote whatever it was sent. One
 the sweep, on configuration, logs the validation message, which names the rule and never the value.
 `test/secrets.test.ts` drives the sweep through a network error, an API error body and a malformed
 response that each quote the secret, a reconciliation that cannot start because the secret is
-malformed, and the failure paths of the catalogue routes, and asserts the secret appears in none of
+malformed, and the failure paths of the catalogue and checkout routes, and asserts the secret appears in none of
 the captured log lines or responses. A live price read that fails quoting the secret is covered too.
 The webhook endpoint secret is covered the same way: a valid delivery, a forged signature and a body
 quoting the secret leave it in no log line or response.
@@ -246,12 +285,13 @@ quoting the secret leave it in no log line or response.
 ```
 src/runtime       framework-agnostic: environment parsing, SDK configuration, error mapping
 src/catalogue     framework-agnostic: the merchant catalogue, its link to BuPayment, reconciliation
+src/checkout      framework-agnostic: selling a linked product at the displayed price
 src/http          the Express adapter, and the only place that imports Express
 src/main.ts       boots the runtime and starts the HTTP server
 src/reconcile.ts  runs one reconciliation sweep and exits
 ```
 
-`src/runtime` and `src/catalogue` import nothing from Express and together form the
+`src/runtime`, `src/catalogue` and `src/checkout` import nothing from Express and together form the
 framework-agnostic core; they depend on each other, since the runtime context wires the catalogue
 store and the reconciliation command reads the runtime configuration. A Fastify or Nest playground
 reuses both unchanged and replaces only `src/http`.
