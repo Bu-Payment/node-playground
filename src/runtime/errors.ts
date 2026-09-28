@@ -19,6 +19,8 @@ const UNEXPECTED: FailureView = {
   message: "The playground could not complete the request.",
 };
 
+const UPSTREAM_MESSAGE = "BuPayment could not complete the request.";
+
 const CALLER_FAULT: FailureView = {
   status: 400,
   code: "request_invalid",
@@ -27,13 +29,17 @@ const CALLER_FAULT: FailureView = {
 
 export function describeFailure(error: unknown): FailureView {
   if (error instanceof BuPaymentError) {
-    return { status: error.status ?? 502, code: error.code, message: error.message };
+    return { status: upstreamStatus(error.status), code: error.code, message: UPSTREAM_MESSAGE };
   }
   const status = callerStatus(error);
   if (status !== undefined) {
     return { ...CALLER_FAULT, status };
   }
   return UNEXPECTED;
+}
+
+function upstreamStatus(status: number | undefined): number {
+  return status !== undefined && status >= 400 && status <= 599 ? status : 502;
 }
 
 function callerStatus(error: unknown): number | undefined {

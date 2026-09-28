@@ -62,7 +62,7 @@ describe("createApp", () => {
     expect(response.status).toBe(401);
     expect(response.body).toEqual({
       code: "application_auth_required",
-      message: "Application authentication is required",
+      message: "BuPayment could not complete the request.",
     });
   });
 
