@@ -13,6 +13,14 @@ const TSHIRT = merchantProduct({
 
 const ORDER = { orderId: "A1", sku: "TSHIRT", email: "buyer@example.test" };
 
+const REFUSAL_MESSAGES = {
+  product_not_found: "No such local product.",
+  not_sellable: "The product is not linked to an active BuPayment price.",
+  price_unknown: "No price has been shown for this product yet. Load the catalogue first.",
+  order_mismatch: "That orderId already belongs to another product.",
+  out_of_stock: "The product is out of stock.",
+};
+
 function failing(body: object, status: number) {
   const api = fakePaymentsApi();
   api.failure = Response.json(body, { status });
@@ -128,8 +136,7 @@ describe("POST /checkout", () => {
     const response = await request(app).post("/checkout").send(body);
 
     expect(response.status).toBe(status);
-    expect(response.body.code).toBe(code);
-    expect(response.body.message).toMatch(/\S/);
+    expect(response.body).toEqual({ code, message: REFUSAL_MESSAGES[code] });
   });
 
   it("refuses to reuse an order for another product", async () => {
@@ -144,7 +151,10 @@ describe("POST /checkout", () => {
       .send({ ...ORDER, sku: "MUG" });
 
     expect(response.status).toBe(409);
-    expect(response.body.code).toBe("order_mismatch");
+    expect(response.body).toEqual({
+      code: "order_mismatch",
+      message: REFUSAL_MESSAGES.order_mismatch,
+    });
   });
 
   it.each([
