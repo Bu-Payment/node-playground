@@ -191,6 +191,23 @@ describe("sell", () => {
     expect(api.charges).toEqual([]);
   });
 
+  it("refuses the second product when one order races for two", async () => {
+    const { api, store, sell: sale } = setup();
+    const catalogue = store.load();
+    putProduct(catalogue, merchantProduct({ ...STORED, sku: "MUG" }));
+    store.save(catalogue);
+
+    const results = await Promise.all([sale("A1", "TSHIRT"), sale("A1", "MUG")]);
+
+    expect(results).toEqual([
+      expect.objectContaining({ outcome: "paid" }),
+      { outcome: "refused", reason: "order_mismatch" },
+    ]);
+    expect(api.payments).toHaveLength(1);
+    expect(store.load().products.MUG?.stock).toBe(3);
+    expect(store.load().reservations).toEqual({ A1: "TSHIRT" });
+  });
+
   it("gives the unit back and lets any other API failure through", async () => {
     const api = fakePaymentsApi();
     api.failure = Response.json(

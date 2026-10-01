@@ -259,8 +259,10 @@ it reads the price. A `live` product never displayed answers `409 price_unknown`
 retry of that checkout. It names the idempotency key, so a retry never charges twice, and it names
 the reservation, so a retry never takes a second unit: the catalogue records which order holds which
 unit, and `reserve()` answers yes without taking another when the order already holds one. An
-`orderId` that already holds another product answers `409 order_mismatch`. A paid order keeps its
-record; sending it again answers with the same payment.
+`orderId` that already holds another product answers `409 order_mismatch`, and `reserve()` itself
+never moves an order onto a second product. A paid order keeps its record, so sending it again
+answers with the same payment. The playground keeps these records forever; a real store needs to
+expire them.
 
 | Outcome | Answer | Stock |
 | --- | --- | --- |

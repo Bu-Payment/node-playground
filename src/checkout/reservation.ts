@@ -21,8 +21,9 @@ export function orderReservation(
   return {
     reserve: () => {
       const catalogue = store.load();
-      if (heldBy(catalogue, orderId) === sku) {
-        return true;
+      const held = heldBy(catalogue, orderId);
+      if (held !== undefined) {
+        return held === sku;
       }
       const product = findProduct(catalogue, sku);
       if (product === undefined || product.stock === 0) {
