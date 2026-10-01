@@ -1,4 +1,10 @@
-import type { Customer, ExpectedPrice, FetchLike, Payment } from "@bu-payment/node-sdk";
+import {
+  type Customer,
+  type ExpectedPrice,
+  type FetchLike,
+  Header,
+  type Payment,
+} from "@bu-payment/node-sdk";
 import {
   type CatalogueApi,
   decodeBody,
@@ -12,13 +18,19 @@ export interface PaymentsApi {
   catalogue: CatalogueApi;
   customers: Customer[];
   payments: Payment[];
-  charges: { customerId: string; priceId: string; expectedPrice?: ExpectedPrice }[];
+  charges: {
+    customerId: string;
+    priceId: string;
+    expectedPrice?: ExpectedPrice;
+    idempotencyKey: string | undefined;
+  }[];
   paymentStatus: string;
   failure: Response | null;
   fetch: FetchLike;
 }
 
 export function fakePaymentsApi(catalogue: CatalogueApi = oneTimeCatalogue()): PaymentsApi {
+  const replays = new Map<string, Payment>();
   const api: PaymentsApi = {
     catalogue,
     customers: [],
@@ -35,7 +47,8 @@ export function fakePaymentsApi(catalogue: CatalogueApi = oneTimeCatalogue()): P
           : listCustomers(api, url.searchParams.get("email"));
       }
       if (url.pathname === "/v1/payments" && method === "POST") {
-        return api.failure?.clone() ?? charge(api, decodeBody(init.body) as Charge);
+        const key = (init.headers as Record<string, string>)[Header.IDEMPOTENCY_KEY];
+        return api.failure?.clone() ?? charge(api, replays, key, decodeBody(init.body) as Charge);
       }
       return catalogue.fetch(input, init);
     },
@@ -74,12 +87,22 @@ function createCustomer(api: PaymentsApi, body: { email: string }): Response {
   return Response.json(customer, { status: 201 });
 }
 
-function charge(api: PaymentsApi, body: Charge): Response {
+function charge(
+  api: PaymentsApi,
+  replays: Map<string, Payment>,
+  idempotencyKey: string | undefined,
+  body: Charge,
+): Response {
   api.charges.push({
     customerId: body.customerId,
     priceId: body.priceId,
     ...(body.expectedPrice === undefined ? {} : { expectedPrice: body.expectedPrice }),
+    idempotencyKey,
   });
+  const replayed = idempotencyKey === undefined ? undefined : replays.get(idempotencyKey);
+  if (replayed !== undefined) {
+    return Response.json(replayed, { status: 201 });
+  }
   const current = api.catalogue.prices.find((row) => row.id === body.priceId);
   if (current === undefined) {
     return Response.json({ error: "resource_not_found", message: "Not found" }, { status: 404 });
@@ -120,5 +143,8 @@ function charge(api: PaymentsApi, body: Charge): Response {
     updatedAt: WRITTEN_AT,
   };
   api.payments.push(payment);
+  if (idempotencyKey !== undefined) {
+    replays.set(idempotencyKey, payment);
+  }
   return Response.json(payment, { status: 201 });
 }

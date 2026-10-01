@@ -21,25 +21,25 @@ function setup(local: MerchantProduct = STORED, api: PaymentsApi = fakePaymentsA
   return {
     api,
     store,
-    sell: (sku: string, email = "buyer@example.test") => sell(client, store, { sku, email }),
+    stock: () => store.load().products.TSHIRT?.stock,
+    sell: (orderId = "A1", sku = "TSHIRT") =>
+      sell(client, store, { orderId, sku, email: "buyer@example.test" }),
   };
 }
 
 describe("sell", () => {
-  it("charges the linked price at the stored amount the storefront showed", async () => {
+  it("charges the linked price at the stored amount, keyed by the order", async () => {
     const { api, sell: sale } = setup();
 
-    const result = await sale("TSHIRT");
+    const result = await sale();
 
-    expect(result).toMatchObject({
-      sold: true,
-      payment: { id: "pay_1", status: "succeeded", amount: 2750, currency: "EUR" },
-    });
+    expect(result).toMatchObject({ outcome: "paid", payment: { id: "pay_1", amount: 2750 } });
     expect(api.charges).toEqual([
       {
         customerId: "cus_1",
         priceId: "price_1",
         expectedPrice: { unitAmount: 2750, currency: "EUR" },
+        idempotencyKey: "order-A1",
       },
     ]);
   });
@@ -54,92 +54,104 @@ describe("sell", () => {
     });
     const { api, sell: sale } = setup(live);
 
-    await sale("TSHIRT");
+    await sale();
 
     expect(api.charges[0]?.expectedPrice).toEqual({ unitAmount: 2750, currency: "EUR" });
     expect(api.catalogue.requests).toEqual([]);
   });
 
-  it("takes one unit off the stock when the payment succeeded", async () => {
-    const { store, sell: sale } = setup();
+  it("keeps the unit of a paid order", async () => {
+    const { store, stock, sell: sale } = setup();
 
-    const result = await sale("TSHIRT");
+    await sale();
 
-    expect(result).toMatchObject({ sold: true, stock: 2 });
-    expect(store.load().products.TSHIRT?.stock).toBe(2);
+    expect(stock()).toBe(2);
+    expect(store.load().reservations).toEqual({ A1: "TSHIRT" });
   });
 
-  it("leaves the stock alone when the payment has not succeeded", async () => {
+  it("gives the unit back when the payment did not succeed", async () => {
     const api = fakePaymentsApi();
     api.paymentStatus = "pending";
-    const { store, sell: sale } = setup(STORED, api);
+    const { store, stock, sell: sale } = setup(STORED, api);
 
-    const result = await sale("TSHIRT");
+    const result = await sale();
 
-    expect(result).toMatchObject({ sold: true, stock: 3, payment: { status: "pending" } });
-    expect(store.load().products.TSHIRT?.stock).toBe(3);
+    expect(result).toMatchObject({ outcome: "unpaid", payment: { status: "pending" } });
+    expect(stock()).toBe(3);
+    expect(store.load().reservations).toEqual({});
   });
 
-  it("never sells the last unit twice when two checkouts race", async () => {
-    const { api, store, sell: sale } = setup(merchantProduct({ ...STORED, stock: 1 }));
+  it("never sells the last unit twice when two orders race", async () => {
+    const { api, stock, sell: sale } = setup(merchantProduct({ ...STORED, stock: 1 }));
 
-    const results = await Promise.all([sale("TSHIRT"), sale("TSHIRT")]);
+    const results = await Promise.all([sale("A1"), sale("B2")]);
 
-    expect(results.map((result) => (result.sold ? "sold" : result.reason)).sort()).toEqual([
-      "out_of_stock",
-      "sold",
-    ]);
+    expect(results.map((result) => result.outcome).sort()).toEqual(["paid", "unavailable"]);
     expect(api.payments).toHaveLength(1);
-    expect(store.load().products.TSHIRT?.stock).toBe(0);
+    expect(stock()).toBe(0);
   });
 
-  it("gives the unit back when BuPayment fails", async () => {
+  it("settles an unconfirmed order on retry without taking a second unit", async () => {
     const api = fakePaymentsApi();
     api.failure = Response.json({ error: "operation_failed", message: "Down" }, { status: 503 });
-    const { store, sell: sale } = setup(STORED, api);
+    const { stock, sell: sale } = setup(STORED, api);
 
-    await expect(sale("TSHIRT")).rejects.toMatchObject({ status: 503 });
+    const first = await sale();
+    api.failure = null;
+    const second = await sale();
 
-    expect(store.load().products.TSHIRT?.stock).toBe(3);
+    expect(first.outcome).toBe("unconfirmed");
+    expect(second.outcome).toBe("paid");
+    expect(api.payments).toHaveLength(1);
+    expect(stock()).toBe(2);
   });
 
-  it("reuses the customer that already has the email", async () => {
-    const api = fakePaymentsApi();
-    const { sell: sale } = setup(STORED, api);
+  it("answers a repeated paid order with the same payment and the same unit", async () => {
+    const { api, stock, sell: sale } = setup();
 
-    await sale("TSHIRT");
-    await sale("TSHIRT");
+    await sale();
+    const again = await sale();
 
-    expect(api.customers).toHaveLength(1);
-    expect(api.charges.map((entry) => entry.customerId)).toEqual(["cus_1", "cus_1"]);
+    expect(again).toMatchObject({ outcome: "paid", payment: { id: "pay_1" } });
+    expect(api.payments).toHaveLength(1);
+    expect(stock()).toBe(2);
   });
 
-  it("refuses with the shown and current price when the canonical price changed", async () => {
-    const { api, store, sell: sale } = setup(STORED, fakePaymentsApi(oneTimeCatalogue(3000)));
-
-    const result = await sale("TSHIRT");
-
-    expect(result).toEqual({
-      sold: false,
-      reason: "price_changed",
-      shown: { amount: 2750, currency: "EUR" },
-      current: { amount: 3000, currency: "EUR" },
-    });
-    expect(api.payments).toEqual([]);
-    expect(store.load().products.TSHIRT?.stock).toBe(3);
-  });
-
-  it("still refuses a changed price when the API leaves the current one out", async () => {
+  it("keeps the unit of an order BuPayment can no longer settle", async () => {
     const api = fakePaymentsApi();
     api.failure = Response.json(
-      { error: "price_changed", message: "The price no longer matches" },
+      { error: "idempotency_outcome_unknown", message: "Unknown" },
       { status: 409 },
     );
-    const { sell: sale } = setup(STORED, api);
+    const { stock, sell: sale } = setup(STORED, api);
 
-    const result = await sale("TSHIRT");
+    const result = await sale();
 
-    expect(result).toMatchObject({ sold: false, reason: "price_changed", current: null });
+    expect(result.outcome).toBe("needs_reconciliation");
+    expect(stock()).toBe(2);
+  });
+
+  it("refuses with the shown and current price and gives the unit back", async () => {
+    const { api, stock, sell: sale } = setup(STORED, fakePaymentsApi(oneTimeCatalogue(3000)));
+
+    const result = await sale();
+
+    expect(result).toMatchObject({
+      outcome: "price_changed",
+      shown: { unitAmount: 2750, currency: "EUR" },
+      current: { unitAmount: 3000, currency: "EUR" },
+    });
+    expect(api.payments).toEqual([]);
+    expect(stock()).toBe(3);
+  });
+
+  it("answers unavailable without calling BuPayment when the stock is gone", async () => {
+    const { api, sell: sale } = setup(merchantProduct({ ...STORED, stock: 0 }));
+
+    const result = await sale();
+
+    expect(result).toEqual({ outcome: "unavailable" });
+    expect(api.customers).toEqual([]);
   });
 
   it.each([
@@ -155,25 +167,40 @@ describe("sell", () => {
       "TSHIRT",
       merchantProduct({ ...STORED, pricing: { mode: "live", lastKnown: null } }),
     ],
-    ["out_of_stock", "TSHIRT", merchantProduct({ ...STORED, stock: 0 })],
   ] as const)("refuses %s before calling BuPayment", async (reason, sku, local) => {
     const { api, sell: sale } = setup(local);
 
-    const result = await sale(sku);
+    const result = await sale("A1", sku);
 
-    expect(result).toEqual({ sold: false, reason });
+    expect(result).toEqual({ outcome: "refused", reason });
     expect(api.charges).toEqual([]);
     expect(api.customers).toEqual([]);
   });
 
-  it("lets any other API failure through", async () => {
+  it("refuses an order that already holds another product", async () => {
+    const other = merchantProduct({ ...STORED, sku: "MUG" });
+    const { api, store, sell: sale } = setup();
+    const catalogue = store.load();
+    putProduct(catalogue, other);
+    catalogue.reservations.A1 = "MUG";
+    store.save(catalogue);
+
+    const result = await sale("A1", "TSHIRT");
+
+    expect(result).toEqual({ outcome: "refused", reason: "order_mismatch" });
+    expect(api.charges).toEqual([]);
+  });
+
+  it("gives the unit back and lets any other API failure through", async () => {
     const api = fakePaymentsApi();
     api.failure = Response.json(
-      { error: "capability_unsupported", message: "The provider cannot charge" },
+      { error: "provider_capability_not_supported", message: "No charges" },
       { status: 422 },
     );
-    const { sell: sale } = setup(STORED, api);
+    const { store, stock, sell: sale } = setup(STORED, api);
 
-    await expect(sale("TSHIRT")).rejects.toMatchObject({ name: "BuPaymentError", status: 422 });
+    await expect(sale()).rejects.toMatchObject({ name: "BuPaymentError", status: 422 });
+    expect(stock()).toBe(3);
+    expect(store.load().reservations).toEqual({});
   });
 });

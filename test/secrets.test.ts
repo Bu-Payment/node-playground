@@ -126,7 +126,7 @@ describe("the confidential secret", () => {
 
     const response = await request(app)
       .post("/checkout")
-      .send({ sku: "TSHIRT", email: "buyer@example.test" });
+      .send({ orderId: "A1", sku: "TSHIRT", email: "buyer@example.test" });
 
     expect(response.status).toBeGreaterThanOrEqual(400);
     expect(response.text).not.toContain(FAKE_SECRET);
@@ -139,8 +139,12 @@ describe("the confidential secret", () => {
     const app = createApp({ ...context, catalogue: memoryStore(sellableCatalogue()) });
 
     const responses = await Promise.all([
-      request(app).post("/checkout").send({ sku: "TSHIRT", email: "buyer@example.test" }),
-      request(app).post("/checkout").send({ sku: FAKE_SECRET, email: FAKE_SECRET }),
+      request(app)
+        .post("/checkout")
+        .send({ orderId: "A1", sku: "TSHIRT", email: "buyer@example.test" }),
+      request(app)
+        .post("/checkout")
+        .send({ orderId: FAKE_SECRET, sku: FAKE_SECRET, email: FAKE_SECRET }),
       request(app).post("/checkout").set("Content-Type", "application/json").send("{"),
     ]);
 

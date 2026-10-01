@@ -11,7 +11,13 @@ const TSHIRT = merchantProduct({
   bupayment: link(),
 });
 
-const ORDER = { sku: "TSHIRT", email: "buyer@example.test" };
+const ORDER = { orderId: "A1", sku: "TSHIRT", email: "buyer@example.test" };
+
+function failing(body: object, status: number) {
+  const api = fakePaymentsApi();
+  api.failure = Response.json(body, { status });
+  return api;
+}
 
 describe("POST /checkout", () => {
   it("sells one unit at the displayed price", async () => {
@@ -21,8 +27,24 @@ describe("POST /checkout", () => {
 
     expect(response.status).toBe(201);
     expect(response.body).toEqual({
+      orderId: "A1",
       payment: { id: "pay_1", status: "succeeded", amount: 2750, currency: "EUR" },
       stock: 2,
+    });
+  });
+
+  it("reports a payment that did not succeed", async () => {
+    const api = fakePaymentsApi();
+    api.paymentStatus = "pending";
+    const { app } = appWith([TSHIRT], api.fetch);
+
+    const response = await request(app).post("/checkout").send(ORDER);
+
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({
+      orderId: "A1",
+      payment: { id: "pay_1", status: "pending", amount: 2750, currency: "EUR" },
+      stock: 3,
     });
   });
 
@@ -37,6 +59,56 @@ describe("POST /checkout", () => {
       message: "The price changed since it was shown. Reload the catalogue and try again.",
       shown: { amount: 2750, currency: "EUR" },
       current: { amount: 3000, currency: "EUR" },
+    });
+  });
+
+  it("answers a changed price with no current one when the API leaves it out", async () => {
+    const api = failing({ error: "price_changed", message: "Changed" }, 409);
+    const { app } = appWith([TSHIRT], api.fetch);
+
+    const response = await request(app).post("/checkout").send(ORDER);
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({ code: "price_changed", current: null });
+  });
+
+  it("tells the client to retry the same order when the payment is unconfirmed", async () => {
+    const api = failing({ error: "operation_failed", message: "Down" }, 503);
+    const { app, lines } = appWith([TSHIRT], api.fetch);
+
+    const response = await request(app).post("/checkout").send(ORDER);
+
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({
+      orderId: "A1",
+      status: "confirming",
+      message: "The payment is not confirmed yet. Retry with the same orderId.",
+    });
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
+      level: "info",
+      message: "Payment unconfirmed",
+      orderId: "A1",
+      code: "operation_failed",
+    });
+  });
+
+  it("puts an order BuPayment cannot settle under review and alerts the log", async () => {
+    const api = failing({ error: "idempotency_outcome_unknown", message: "Unknown" }, 409);
+    const { app, lines } = appWith([TSHIRT], api.fetch);
+
+    const response = await request(app).post("/checkout").send(ORDER);
+
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({
+      orderId: "A1",
+      status: "under_review",
+      message: "The payment needs to be checked before this order can go on.",
+    });
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
+      level: "error",
+      message: "Payment needs reconciliation",
+      orderId: "A1",
+      sku: "TSHIRT",
     });
   });
 
@@ -60,10 +132,26 @@ describe("POST /checkout", () => {
     expect(response.body.message).toMatch(/\S/);
   });
 
+  it("refuses to reuse an order for another product", async () => {
+    const { app } = appWith(
+      [TSHIRT, merchantProduct({ ...TSHIRT, sku: "MUG" })],
+      fakePaymentsApi().fetch,
+    );
+
+    await request(app).post("/checkout").send(ORDER);
+    const response = await request(app)
+      .post("/checkout")
+      .send({ ...ORDER, sku: "MUG" });
+
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe("order_mismatch");
+  });
+
   it.each([
-    [{ sku: "TSHIRT" }],
-    [{ sku: "TSHIRT", email: "not-an-email" }],
-    [{ sku: "", email: "buyer@example.test" }],
+    [{ sku: "TSHIRT", email: "buyer@example.test" }],
+    [{ ...ORDER, email: "not-an-email" }],
+    [{ ...ORDER, sku: "" }],
+    [{ ...ORDER, orderId: "../A1" }],
     [{ ...ORDER, quantity: 2 }],
   ])("rejects an invalid order %j", async (body) => {
     const { app } = appWith([TSHIRT], fakePaymentsApi().fetch);
@@ -74,19 +162,18 @@ describe("POST /checkout", () => {
     expect(response.body.code).toBe("checkout_invalid");
   });
 
-  it("reports a provider failure with the API's own code", async () => {
-    const api = fakePaymentsApi();
-    api.failure = Response.json(
-      { error: "operation_failed", message: "The provider cannot charge" },
-      { status: 503 },
-    );
+  it("reports a provider refusal with the API's own code and gives the unit back", async () => {
+    const api = failing({ error: "operation_failed", message: "No charges" }, 422);
     const { app, store, lines } = appWith([TSHIRT], api.fetch);
 
     const response = await request(app).post("/checkout").send(ORDER);
 
-    expect(response.status).toBe(503);
-    expect(response.body.code).toBe("operation_failed");
+    expect(response.status).toBe(422);
+    expect(response.body).toEqual({
+      code: "operation_failed",
+      message: "BuPayment could not complete the request.",
+    });
     expect(store.load().products.TSHIRT?.stock).toBe(3);
-    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({ path: "/checkout", status: 503 });
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({ path: "/checkout", status: 422 });
   });
 });

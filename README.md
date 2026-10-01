@@ -80,16 +80,18 @@ Anything else answers `404 route_not_found`. A request body is parsed as JSON up
 webhook, which reads up to 256kb of raw bytes; a malformed body answers `400 request_invalid` and one
 above the limit answers `413 request_invalid`. A failure
 the playground does not recognize answers `500 internal_error` with a fixed message, so nothing
-about the failure reaches the caller. A BuPayment failure keeps the SDK's code and its status, or
-`502` when that status is not an error status, but never the API's message, which can quote whatever
-the request carried.
+about the failure reaches the caller. A BuPayment failure takes its status and code from the SDK's
+`publicError`: the SDK's code and status, `502` when that status is not an error status, and
+`502 operation_failed` when BuPayment refused the playground's own credential, since a `401` or `403`
+would tell the caller that its own request was refused. The API's message is never passed on,
+because it can quote whatever the request carried.
 
 | Route | Failure |
 | --- | --- |
 | `POST /products` | `422 product_invalid`, `409 product_exists` |
 | `PUT /products/:sku/link` | `422 link_invalid`, `404 product_not_found` (local SKU), `422 price_not_of_product`, `422 inactive`; a BuPayment ID this application cannot see surfaces as the SDK's `404 resource_not_found` |
 | `PUT /products/:sku/price` | `422 price_invalid` (an amount only; the currency never changes), `404 product_not_found`, `409 product_changed`; a failure reading or creating the BuPayment price surfaces as the SDK's status and code |
-| `POST /checkout` | `422 checkout_invalid`, `404 product_not_found`, `409 not_sellable`, `409 price_unknown`, `409 out_of_stock`, `409 price_changed`; any other failure creating the customer or the payment surfaces as the SDK's status and code |
+| `POST /checkout` | `422 checkout_invalid`, `404 product_not_found`, `409 not_sellable`, `409 price_unknown`, `409 order_mismatch`, `409 out_of_stock`, `409 price_changed`; any other failure creating the customer or the payment surfaces as the SDK's status and code |
 | `POST /webhooks/bupayment` | `503 webhook_not_configured`, `400` with the SDK's `webhook_*` code for a refused delivery |
 
 The merchant routes have no authorization. That is acceptable only because the playground binds to
@@ -229,17 +231,46 @@ event; a type it does not know is recorded and ignored.
 
 ## Checkout
 
-`POST /checkout` with `{ sku, email }` sells one unit. The Node SDK's only hosted checkout is for
-subscriptions, so a one-time product is sold with a direct payment:
-`payments.draft().customerId().priceId().expectedPrice().create()`, which is `POST /v1/payments`.
-The public checkout a browser uses needs a publishable key and a browser session, and lives in the
+`POST /checkout` with `{ orderId, sku, email }` sells one unit through the SDK's sale:
+
+```ts
+bupayment.sales
+  .draft()
+  .priceId(link.priceId)
+  .displayedPrice(shown)
+  .customerEmail(order.email)
+  .reference(product.sku)
+  .reservation(orderReservation(store, order.orderId, product.sku))
+  .idempotencyKey(`order-${order.orderId}`)
+  .charge();
+```
+
+The sale finds or creates the customer by email, asserts the displayed price, reserves and releases
+the stock through the playground's hooks, and answers with a typed outcome. The Node SDK's only
+hosted checkout is for subscriptions, so the payment is direct (`POST /v1/payments`). The public
+checkout a browser uses needs a publishable key and lives in the
 [browser playground](https://github.com/Bu-Payment/playground).
 
-The expected price is the one the storefront displayed, read from the merchant's catalogue and never
-from BuPayment: the `stored` amount, or for a `live` product the `lastKnown` value that
-`GET /catalogue` records each time it reads the price. A `live` product never displayed answers
-`409 price_unknown`. BuPayment compares the expected price with the canonical one before it reaches
-the provider; when they differ it refuses the charge, and the playground answers:
+**The displayed price.** It is read from the merchant's catalogue and never from BuPayment: the
+`stored` amount, or for a `live` product the `lastKnown` value that `GET /catalogue` records each time
+it reads the price. A `live` product never displayed answers `409 price_unknown`.
+
+**The order.** The storefront generates `orderId` once per checkout and sends the same value on every
+retry of that checkout. It names the idempotency key, so a retry never charges twice, and it names
+the reservation, so a retry never takes a second unit: the catalogue records which order holds which
+unit, and `reserve()` answers yes without taking another when the order already holds one. An
+`orderId` that already holds another product answers `409 order_mismatch`. A paid order keeps its
+record; sending it again answers with the same payment.
+
+| Outcome | Answer | Stock |
+| --- | --- | --- |
+| `paid` | `201` with the payment | the unit stays sold |
+| `unpaid` (any status but `succeeded`) | `202` with the payment | the unit goes back |
+| `price_changed` | `409 price_changed` with `shown` and `current` | the unit goes back |
+| `unconfirmed` (timeout, network, 5xx) | `202` with `status: "confirming"`: retry with the same `orderId` | the unit stays held |
+| `needs_reconciliation` | `202` with `status: "under_review"`, logged as an error with the request ID | the unit stays held |
+| `unavailable` | `409 out_of_stock`, before any request to BuPayment | none taken |
+| any other failure | the status and code of `publicError` | the unit goes back |
 
 ```json
 {
@@ -250,15 +281,9 @@ the provider; when they differ it refuses the charge, and the playground answers
 }
 ```
 
-`current` is `null` when the API does not return the canonical price. Nothing is charged and the
-stock does not move.
-
-The customer is found by email, or created when none has it. One unit is reserved before BuPayment
-is called, so two checkouts racing for the last unit cannot both be charged; a product with no stock
-left answers `409 out_of_stock`. The unit stays sold when the payment is answered `succeeded` and goes
-back to the stock on any other status or failure. A payment that settles later does not reach the
-stock, since the playground does not consume payment events. There is no quantity: the API takes one
-canonical price per payment.
+`current` is `null` when the API does not return the canonical price. A payment that settles later
+does not reach the stock, since the playground does not consume payment events. There is no
+quantity: the API takes one canonical price per payment.
 
 The credential needs `payments:write`, `customers:read` and `customers:write` on top of the
 catalogue capabilities. The provider has to support direct charges; one that only offers a hosted
