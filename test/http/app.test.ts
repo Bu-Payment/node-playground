@@ -49,7 +49,7 @@ describe("createApp", () => {
     expect(response.body).toEqual({ code: "route_not_found", message: "No such route." });
   });
 
-  it("maps an SDK failure raised by a route to its canonical status and code", async () => {
+  it("answers a refused playground credential as a BuPayment failure", async () => {
     const { context } = contextThatFailsOnHealth(
       new BuPaymentError("Application authentication is required", {
         code: "application_auth_required",
@@ -59,9 +59,9 @@ describe("createApp", () => {
 
     const response = await request(createApp(context)).get("/healthz");
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(502);
     expect(response.body).toEqual({
-      code: "application_auth_required",
+      code: "operation_failed",
       message: "BuPayment could not complete the request.",
     });
   });

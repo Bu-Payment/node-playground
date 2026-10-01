@@ -1,4 +1,4 @@
-import { BuPaymentError } from "@bu-payment/node-sdk";
+import { BuPaymentError, publicError } from "@bu-payment/node-sdk";
 
 export class ConfigurationError extends Error {
   constructor(message: string) {
@@ -29,17 +29,14 @@ const CALLER_FAULT: FailureView = {
 
 export function describeFailure(error: unknown): FailureView {
   if (error instanceof BuPaymentError) {
-    return { status: upstreamStatus(error.status), code: error.code, message: UPSTREAM_MESSAGE };
+    const { status, code } = publicError(error);
+    return { status, code, message: UPSTREAM_MESSAGE };
   }
   const status = callerStatus(error);
   if (status !== undefined) {
     return { ...CALLER_FAULT, status };
   }
   return UNEXPECTED;
-}
-
-function upstreamStatus(status: number | undefined): number {
-  return status !== undefined && status >= 400 && status <= 599 ? status : 502;
 }
 
 function callerStatus(error: unknown): number | undefined {

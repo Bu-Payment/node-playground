@@ -5,6 +5,21 @@ import { describeFailure } from "../../src/runtime/errors";
 describe("describeFailure", () => {
   it("passes through the canonical code and status of an SDK error, never its message", () => {
     const failure = describeFailure(
+      new BuPaymentError("Product prod_1 was not found", {
+        code: "resource_not_found",
+        status: 404,
+      }),
+    );
+
+    expect(failure).toEqual({
+      status: 404,
+      code: "resource_not_found",
+      message: "BuPayment could not complete the request.",
+    });
+  });
+
+  it("blames BuPayment, not the caller, when the playground's own credential is refused", () => {
+    const failure = describeFailure(
       new BuPaymentError("Application authentication is required", {
         code: "application_auth_required",
         status: 401,
@@ -12,8 +27,8 @@ describe("describeFailure", () => {
     );
 
     expect(failure).toEqual({
-      status: 401,
-      code: "application_auth_required",
+      status: 502,
+      code: "operation_failed",
       message: "BuPayment could not complete the request.",
     });
   });
