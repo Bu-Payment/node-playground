@@ -8,6 +8,7 @@ import {
   createProductRoute,
   linkProductRoute,
 } from "./routes/catalogue";
+import { checkoutRoute } from "./routes/checkout";
 import { healthRoute } from "./routes/health";
 import { webhookRoute } from "./routes/webhook";
 
@@ -26,6 +27,7 @@ export function createApp(context: AppContext): Express {
   app.post("/products", createProductRoute(context));
   app.put("/products/:sku/link", linkProductRoute(context));
   app.put("/products/:sku/price", changePriceRoute(context));
+  app.post("/checkout", checkoutRoute(context));
   app.use(notFoundHandler());
   app.use(errorHandler(context.logger));
   return app;

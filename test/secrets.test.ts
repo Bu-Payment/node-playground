@@ -10,6 +10,7 @@ import { memoryStore } from "../src/catalogue/store";
 import { createApp } from "../src/http/app";
 import { fakeCatalogueApi, product } from "./fakes/catalogue-api";
 import { link, merchantProduct } from "./fakes/merchant";
+import { fakePaymentsApi, oneTimeCatalogue } from "./fakes/payments-api";
 import { productEvent, signed, WEBHOOK_SECRET } from "./fakes/webhook";
 import { FAKE_SECRET, testContext, testLogger, VALID_ENV } from "./fixtures";
 
@@ -117,6 +118,42 @@ describe("the confidential secret", () => {
     expect(lines.join("\n")).not.toContain(FAKE_SECRET);
   });
 
+  it.each(
+    Object.entries(leakingFailures),
+  )("stays out of the checkout response and log when BuPayment fails with %s", async (_, fetch) => {
+    const { context, lines } = testContext({}, { fetch });
+    const app = createApp({ ...context, catalogue: memoryStore(sellableCatalogue()) });
+
+    const response = await request(app)
+      .post("/checkout")
+      .send({ orderId: "A1", sku: "TSHIRT", email: "buyer@example.test" });
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.text).not.toContain(FAKE_SECRET);
+    expect(lines.join("\n")).not.toContain(FAKE_SECRET);
+  });
+
+  it("stays out of the checkout refusals and the requests that sign them", async () => {
+    const api = fakePaymentsApi(oneTimeCatalogue(3000));
+    const { context, lines } = testContext({}, { fetch: api.fetch });
+    const app = createApp({ ...context, catalogue: memoryStore(sellableCatalogue()) });
+
+    const responses = await Promise.all([
+      request(app)
+        .post("/checkout")
+        .send({ orderId: "A1", sku: "TSHIRT", email: "buyer@example.test" }),
+      request(app)
+        .post("/checkout")
+        .send({ orderId: FAKE_SECRET, sku: FAKE_SECRET, email: FAKE_SECRET }),
+      request(app).post("/checkout").set("Content-Type", "application/json").send("{"),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([409, 422, 400]);
+    expect(responses.map((response) => response.text).join("\n")).not.toContain(FAKE_SECRET);
+    expect(lines.join("\n")).not.toContain(FAKE_SECRET);
+    expect(JSON.stringify(api.catalogue.requests)).not.toContain(FAKE_SECRET);
+  });
+
   it("keeps the webhook endpoint secret out of the log and every webhook response", async () => {
     const { context, lines } = testContext({ BUPAYMENT_WEBHOOK_SECRET: WEBHOOK_SECRET });
     const app = createApp(context);
@@ -143,3 +180,16 @@ describe("the confidential secret", () => {
     expect(everything).not.toContain(FAKE_SECRET);
   });
 });
+
+function sellableCatalogue() {
+  const catalogue = emptyCatalogue();
+  putProduct(
+    catalogue,
+    merchantProduct({
+      sku: "TSHIRT",
+      pricing: { mode: "stored", amount: 2750, currency: "EUR" },
+      bupayment: link(),
+    }),
+  );
+  return catalogue;
+}

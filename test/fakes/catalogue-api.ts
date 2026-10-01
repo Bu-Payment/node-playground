@@ -163,7 +163,7 @@ function notFound(): Response {
   return Response.json({ error: "resource_not_found", message: "Not found" }, { status: 404 });
 }
 
-function decodeBody(body: RequestInit["body"]): unknown {
+export function decodeBody(body: RequestInit["body"]): unknown {
   if (body === undefined || body === null) {
     return undefined;
   }

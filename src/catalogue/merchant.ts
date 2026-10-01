@@ -50,6 +50,7 @@ const ReceivedWebhooksSchema = z.object({
 export const MerchantCatalogueSchema = z.object({
   products: z.record(z.string(), MerchantProductSchema),
   received: ReceivedWebhooksSchema.default({ deliveries: {}, events: {} }),
+  reservations: z.record(z.string(), z.string()).default({}),
 });
 
 export const PRICING_MODES = ["stored", "live"] as const;
@@ -59,7 +60,7 @@ export type MerchantProduct = z.infer<typeof MerchantProductSchema>;
 export type MerchantCatalogue = z.infer<typeof MerchantCatalogueSchema>;
 
 export function emptyCatalogue(): MerchantCatalogue {
-  return { products: {}, received: { deliveries: {}, events: {} } };
+  return { products: {}, received: { deliveries: {}, events: {} }, reservations: {} };
 }
 
 export function isSellable(link: CatalogueLink | null): boolean {

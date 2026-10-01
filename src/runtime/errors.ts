@@ -1,4 +1,4 @@
-import { BuPaymentError } from "@bu-payment/node-sdk";
+import { BuPaymentError, publicError } from "@bu-payment/node-sdk";
 
 export class ConfigurationError extends Error {
   constructor(message: string) {
@@ -19,6 +19,8 @@ const UNEXPECTED: FailureView = {
   message: "The playground could not complete the request.",
 };
 
+const UPSTREAM_MESSAGE = "BuPayment could not complete the request.";
+
 const CALLER_FAULT: FailureView = {
   status: 400,
   code: "request_invalid",
@@ -27,7 +29,8 @@ const CALLER_FAULT: FailureView = {
 
 export function describeFailure(error: unknown): FailureView {
   if (error instanceof BuPaymentError) {
-    return { status: error.status ?? 502, code: error.code, message: error.message };
+    const { status, code } = publicError(error);
+    return { status, code, message: UPSTREAM_MESSAGE };
   }
   const status = callerStatus(error);
   if (status !== undefined) {

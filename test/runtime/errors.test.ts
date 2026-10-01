@@ -3,7 +3,22 @@ import { describe, expect, it } from "vitest";
 import { describeFailure } from "../../src/runtime/errors";
 
 describe("describeFailure", () => {
-  it("passes through the canonical code and status of an SDK error", () => {
+  it("passes through the canonical code and status of an SDK error, never its message", () => {
+    const failure = describeFailure(
+      new BuPaymentError("Product prod_1 was not found", {
+        code: "resource_not_found",
+        status: 404,
+      }),
+    );
+
+    expect(failure).toEqual({
+      status: 404,
+      code: "resource_not_found",
+      message: "BuPayment could not complete the request.",
+    });
+  });
+
+  it("blames BuPayment, not the caller, when the playground's own credential is refused", () => {
     const failure = describeFailure(
       new BuPaymentError("Application authentication is required", {
         code: "application_auth_required",
@@ -12,10 +27,20 @@ describe("describeFailure", () => {
     );
 
     expect(failure).toEqual({
-      status: 401,
-      code: "application_auth_required",
-      message: "Application authentication is required",
+      status: 502,
+      code: "operation_failed",
+      message: "BuPayment could not complete the request.",
     });
+  });
+
+  it.each([
+    200, 302,
+  ])("answers a bad gateway for an SDK error carrying the non-error status %i", (status) => {
+    const failure = describeFailure(
+      new BuPaymentError("API response is not valid JSON", { code: "response_invalid", status }),
+    );
+
+    expect(failure.status).toBe(502);
   });
 
   it("defaults an SDK error without a status to a bad gateway", () => {
