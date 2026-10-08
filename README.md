@@ -207,7 +207,11 @@ change stands.
 ### Webhooks
 
 Set `BUPAYMENT_WEBHOOK_SECRET` to the `whsec_` value issued for the endpoint, and subscribe the
-endpoint to the `catalogue.*` events.
+endpoint to the `catalogue.*` events. The playground has no registration script: [Testing
+locally](https://github.com/Bu-Payment/api/blob/main/docs/webhooks/09-testing-locally.md) in the
+[BuPayment webhook guide](https://github.com/Bu-Payment/api/blob/main/docs/webhooks/00-index.md)
+registers this receiver with the SDK, triggers each catalogue event, and shows how to inspect and
+redeliver the deliveries.
 
 `POST /webhooks/bupayment` is mounted with a raw-body parser ahead of the global JSON parser,
 because the signature covers `${timestamp}.${rawBody}` and re-serializing a parsed body does not
