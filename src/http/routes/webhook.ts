@@ -1,4 +1,4 @@
-import { BuPaymentError, verifyWebhookDelivery } from "@bu-payment/node-sdk";
+import { BuPaymentError, type WebhookHeaders, webhookDelivery } from "@bu-payment/node-sdk";
 import type { RequestHandler } from "express";
 import { receiveDelivery } from "../../catalogue/webhook";
 import type { AppContext } from "../../runtime/context";
@@ -36,13 +36,9 @@ export function webhookRoute(context: AppContext): RequestHandler {
   };
 }
 
-function verify(
-  body: Buffer,
-  headers: Parameters<typeof verifyWebhookDelivery>[0]["headers"],
-  secret: string,
-) {
+function verify(body: Buffer, headers: WebhookHeaders, secret: string) {
   try {
-    return verifyWebhookDelivery({ body, headers, secret });
+    return webhookDelivery().secret(secret).body(body).headers(headers).verify();
   } catch (error) {
     if (error instanceof BuPaymentError) {
       return error;

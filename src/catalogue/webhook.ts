@@ -5,6 +5,7 @@ import {
   type Price,
   type Product,
   type VerifiedWebhookDelivery,
+  type WebhookEvent,
 } from "@bu-payment/node-sdk";
 import { collect } from "./collect";
 import { applyCatalogueEvent, defaultPriceIdOf } from "./events";
@@ -50,7 +51,7 @@ export async function receiveDelivery(
     replacements: [],
     unlinked: [],
   };
-  if (seen || event.type === "unknown") {
+  if (seen || !isCatalogueEvent(event)) {
     store.save(local);
     return { ...report, outcome: seen ? "duplicate" : "ignored" };
   }
@@ -165,6 +166,10 @@ function isLinked(catalogue: MerchantCatalogue, productId: string): boolean {
   return Object.values(catalogue.products).some(
     (product) => product.bupayment?.productId === productId,
   );
+}
+
+function isCatalogueEvent(event: WebhookEvent): event is CatalogueEvent {
+  return event.type.startsWith("catalogue.");
 }
 
 function record(ids: Record<string, string>, id: string, at: string): void {

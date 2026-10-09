@@ -5,7 +5,7 @@ import { memoryStore } from "../../src/catalogue/store";
 import { createApp } from "../../src/http/app";
 import { product } from "../fakes/catalogue-api";
 import { link, merchantProduct } from "../fakes/merchant";
-import { productEvent, signed, WEBHOOK_SECRET } from "../fakes/webhook";
+import { checkoutEvent, productEvent, signed, WEBHOOK_SECRET } from "../fakes/webhook";
 import { testContext } from "../fixtures";
 
 const LATER = "2026-09-20T00:00:00.000Z";
@@ -130,6 +130,17 @@ describe("POST /webhooks/bupayment", () => {
     const second = await post(app, delivery);
 
     expect([first.body.outcome, second.body.outcome]).toEqual(["applied", "duplicate"]);
+  });
+
+  it("acknowledges a checkout delivery without touching the catalogue", async () => {
+    const { app, store } = webhookApp();
+    const before = store.load().products;
+
+    const response = await post(app, signed(checkoutEvent("checkout.completed")));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ received: true, outcome: "ignored" });
+    expect(store.load().products).toEqual(before);
   });
 
   it("answers 503 when no endpoint secret is configured", async () => {

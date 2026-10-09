@@ -3,9 +3,12 @@ import type {
   CatalogueEvent,
   CataloguePriceEventType,
   CatalogueProductEventType,
+  CheckoutEvent,
+  CheckoutStatus,
   Price,
   Product,
   VerifiedWebhookDelivery,
+  WebhookEvent,
 } from "@bu-payment/node-sdk";
 
 export const WEBHOOK_SECRET = "whsec_Qm9ndXNUZXN0U2VjcmV0Rm9yVGhlUGxheWdyb3VuZDA";
@@ -52,8 +55,50 @@ export function priceEvent(
   } as CatalogueEvent;
 }
 
+export function checkoutEvent(
+  type: CheckoutEvent["type"],
+  options: {
+    id?: string;
+    checkoutId?: string;
+    reference?: string | null;
+    previousStatus?: CheckoutStatus;
+  } = {},
+): CheckoutEvent {
+  const checkoutId = options.checkoutId ?? "chk_1";
+  const occurredAt = "2026-10-09T12:00:00.000Z";
+  const common = {
+    checkoutId,
+    reference: options.reference === undefined ? "A1" : options.reference,
+    provider: "trust-my-travel",
+    providerCheckoutId: `tmt_${checkoutId}`,
+    previousStatus: options.previousStatus ?? "pending",
+  };
+  const status = type.slice("checkout.".length);
+  const data =
+    type === "checkout.cancelled"
+      ? common
+      : {
+          ...common,
+          status,
+          paymentId: type === "checkout.completed" ? "pay_1" : null,
+          amount: 2750,
+          currency: "EUR",
+          chargedAmount: type === "checkout.completed" ? 2750 : null,
+          chargedCurrency: type === "checkout.completed" ? "EUR" : null,
+          quantity: 1,
+          customerId: "cus_1",
+        };
+  return {
+    version: 1,
+    id: options.id ?? `evt_${type}_${checkoutId}`,
+    type,
+    occurredAt,
+    data,
+  } as CheckoutEvent;
+}
+
 export function verified(
-  event: CatalogueEvent,
+  event: WebhookEvent,
   deliveryId = `dlv_${event.id}`,
 ): VerifiedWebhookDelivery {
   return { deliveryId, signature: "unused", timestamp: new Date(), event };
