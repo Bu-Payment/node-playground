@@ -39,7 +39,13 @@ describe("bootstrap", () => {
     expect(server).toBeDefined();
     if (server) {
       running.push(server);
-      await new Promise((resolve) => server.once("listening", resolve));
+      const outcome = await new Promise<string>((resolve) => {
+        server.once("listening", () => resolve("listening"));
+        server.once("error", (error: NodeJS.ErrnoException) =>
+          resolve(`error ${error.code ?? error.message}`),
+        );
+      });
+      expect(outcome).toBe("listening");
     }
     expect(process.exitCode).not.toBe(1);
   });
