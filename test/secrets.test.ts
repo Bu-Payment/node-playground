@@ -9,7 +9,7 @@ import { emptyCatalogue, putProduct } from "../src/catalogue/merchant";
 import { memoryStore } from "../src/catalogue/store";
 import { createApp } from "../src/http/app";
 import { fakeCatalogueApi, product } from "./fakes/catalogue-api";
-import { fakeHostedCheckoutApi } from "./fakes/checkout-api";
+import { fakeHostedCheckoutApi, withoutDefaultProvider } from "./fakes/checkout-api";
 import { link, merchantProduct } from "./fakes/merchant";
 import { fakePaymentsApi, oneTimeCatalogue } from "./fakes/payments-api";
 import { productEvent, signed, WEBHOOK_SECRET } from "./fakes/webhook";
@@ -156,11 +156,7 @@ describe("the confidential secret", () => {
   });
 
   it("stays out of the answers and log when the environment has no default provider", async () => {
-    const api = fakeHostedCheckoutApi();
-    api.payments.failure = Response.json(
-      { error: "default_provider_not_configured", message: `no default for ${FAKE_SECRET}` },
-      { status: 409 },
-    );
+    const api = withoutDefaultProvider(fakeHostedCheckoutApi(), `no default for ${FAKE_SECRET}`);
     api.failure = Response.json(
       { error: "checkout_live_not_enabled", message: `refused ${FAKE_SECRET}` },
       { status: 409 },

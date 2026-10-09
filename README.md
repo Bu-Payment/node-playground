@@ -277,7 +277,7 @@ expire them.
 | `unconfirmed` (timeout, network, 5xx) | `202` with `status: "confirming"`: retry with the same `orderId` | the unit stays held |
 | `needs_reconciliation` | `202` with `status: "under_review"`, logged as an error with the request ID | the unit stays held |
 | `unavailable` | `409 out_of_stock`, before any request to BuPayment | none taken |
-| no default provider and no `BUPAYMENT_CHECKOUT_PROVIDER` | `503 default_provider_not_configured` | the unit goes back |
+| no default provider, and no `BUPAYMENT_CHECKOUT_DESTINATION` with `BUPAYMENT_CHECKOUT_PROVIDER` | `503 default_provider_not_configured` | the unit goes back |
 | any other failure | the status and code of `publicError` | the unit goes back |
 
 ```json
@@ -302,9 +302,10 @@ A provider without server-side charges (Trust My Travel, SISP) makes the sale fa
 `operation_failed` and `metadata.apiError` `provider_capability_not_supported`. The playground then
 holds the unit by `orderId` and opens a one-time checkout (`POST /v1/checkouts`). An environment
 without a default provider makes the sale fail with `default_provider_not_configured`, since
-`POST /v1/payments` cannot name one; the playground then opens the checkout the same way when
-`BUPAYMENT_CHECKOUT_PROVIDER` is set, and otherwise gives the unit back and answers
-`503 default_provider_not_configured`, asking for a default provider:
+`POST /v1/payments` cannot name one; the playground then opens the checkout the same way when both
+`BUPAYMENT_CHECKOUT_DESTINATION` and `BUPAYMENT_CHECKOUT_PROVIDER` are set, and otherwise gives the
+unit back and answers `503 default_provider_not_configured`, asking for a default provider or for
+both variables:
 
 ```ts
 bupayment.checkout

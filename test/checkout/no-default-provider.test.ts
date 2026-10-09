@@ -70,6 +70,15 @@ describe("sell on an environment without a default provider", () => {
     expect(store.load().reservations).toEqual({});
   });
 
+  it("keeps the unit held when the checkout after the fallback may have been created", async () => {
+    const { api, stock, store, sell: sale } = setup(TMT);
+    api.failure = "network";
+
+    expect(await sale()).toMatchObject({ outcome: "unconfirmed" });
+    expect(stock()).toBe(2);
+    expect(store.load().reservations).toEqual({ A1: "TSHIRT" });
+  });
+
   it.each([
     ["no checkout provider is configured", { destination: "tours", provider: null }],
     ["no checkout is configured", null],

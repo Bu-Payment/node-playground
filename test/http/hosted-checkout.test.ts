@@ -136,8 +136,22 @@ describe("POST /checkout through the hosted checkout", () => {
     expect(response.body).toEqual({
       code: "default_provider_not_configured",
       message:
-        "The BuPayment environment has no default provider. Choose a default provider for the environment, or set BUPAYMENT_CHECKOUT_PROVIDER.",
+        "The BuPayment environment has no default provider. Choose one for the environment, or set BUPAYMENT_CHECKOUT_DESTINATION and BUPAYMENT_CHECKOUT_PROVIDER.",
     });
+    expect(api.requests).toEqual([]);
+  });
+
+  it("answers 503 asking for a default provider when no checkout is configured", async () => {
+    const api = withoutDefaultProvider(fakeHostedCheckoutApi());
+    const { app } = appWith([TSHIRT], api.fetch, {
+      BUPAYMENT_CHECKOUT_PROVIDER: "trust-my-travel",
+    });
+
+    const response = await request(app).post("/checkout").send(ORDER);
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({ code: "default_provider_not_configured" });
+    expect(response.body.message).toContain("BUPAYMENT_CHECKOUT_DESTINATION");
     expect(api.requests).toEqual([]);
   });
 });
