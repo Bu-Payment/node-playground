@@ -18,6 +18,8 @@ const EnvSchema = z.object({
     .trim()
     .regex(/^whsec_[A-Za-z0-9_-]{32,}$/)
     .optional(),
+  BUPAYMENT_CHECKOUT_DESTINATION: z.string().trim().min(1).max(128).optional(),
+  BUPAYMENT_CHECKOUT_PROVIDER: z.string().trim().min(1).max(64).optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

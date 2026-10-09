@@ -1,6 +1,17 @@
-import type { BuPaymentClient, ExpectedPrice, SaleResult } from "@bu-payment/node-sdk";
+import {
+  type BuPaymentClient,
+  BuPaymentError,
+  type ExpectedPrice,
+  type SaleResult,
+} from "@bu-payment/node-sdk";
 import { findProduct, isSellable, type MerchantProduct } from "../catalogue/merchant";
 import type { CatalogueStore } from "../catalogue/store";
+import {
+  checkoutOfOrder,
+  type HostedCheckoutResult,
+  type HostedCheckoutSettings,
+  openHostedCheckout,
+} from "./hosted";
 import { heldBy, orderReservation } from "./reservation";
 
 export interface Order {
@@ -13,14 +24,20 @@ export type CheckoutRefusal =
   | "product_not_found"
   | "not_sellable"
   | "price_unknown"
-  | "order_mismatch";
+  | "order_mismatch"
+  | "checkout_closed"
+  | "checkout_not_configured";
 
-export type CheckoutResult = SaleResult | { outcome: "refused"; reason: CheckoutRefusal };
+export type CheckoutResult =
+  | SaleResult
+  | HostedCheckoutResult
+  | { outcome: "refused"; reason: CheckoutRefusal };
 
 export async function sell(
-  bupayment: Pick<BuPaymentClient, "sales">,
+  bupayment: Pick<BuPaymentClient, "sales" | "checkout">,
   store: CatalogueStore,
   order: Order,
+  hosted: HostedCheckoutSettings | null,
 ): Promise<CheckoutResult> {
   const catalogue = store.load();
   const product = findProduct(catalogue, order.sku);
@@ -39,15 +56,46 @@ export async function sell(
   if (held !== undefined && held !== order.sku) {
     return { outcome: "refused", reason: "order_mismatch" };
   }
-  return await bupayment.sales
-    .draft()
-    .priceId(link.priceId)
-    .displayedPrice(shown)
-    .customerEmail(order.email)
-    .reference(product.sku)
-    .reservation(orderReservation(store, order.orderId, product.sku))
-    .idempotencyKey(`order-${order.orderId}`)
-    .charge();
+  const placed = checkoutOfOrder(catalogue, order.orderId);
+  if (placed !== undefined && (placed.settled !== null || placed.sku !== order.sku)) {
+    return {
+      outcome: "refused",
+      reason: placed.sku === order.sku ? "checkout_closed" : "order_mismatch",
+    };
+  }
+  if (placed === undefined) {
+    try {
+      return await bupayment.sales
+        .draft()
+        .priceId(link.priceId)
+        .displayedPrice(shown)
+        .customerEmail(order.email)
+        .reference(product.sku)
+        .reservation(orderReservation(store, order.orderId, product.sku))
+        .idempotencyKey(`order-${order.orderId}`)
+        .charge();
+    } catch (error) {
+      if (!cannotChargeDirectly(error)) {
+        throw error;
+      }
+    }
+  }
+  if (hosted === null) {
+    return { outcome: "refused", reason: "checkout_not_configured" };
+  }
+  return await openHostedCheckout(
+    bupayment,
+    store,
+    { ...order, priceId: link.priceId, shown },
+    hosted,
+  );
+}
+
+function cannotChargeDirectly(error: unknown): boolean {
+  return (
+    error instanceof BuPaymentError &&
+    error.metadata?.apiError === "provider_capability_not_supported"
+  );
 }
 
 function shownPrice(product: MerchantProduct): ExpectedPrice | null {

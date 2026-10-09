@@ -13,6 +13,29 @@ export function heldBy(catalogue: MerchantCatalogue, orderId: string): string | 
     : undefined;
 }
 
+export function returnHeldUnit(
+  catalogue: MerchantCatalogue,
+  orderId: string,
+  sku: string,
+): boolean {
+  if (!keepHeldUnit(catalogue, orderId, sku)) {
+    return false;
+  }
+  const product = findProduct(catalogue, sku);
+  if (product !== undefined) {
+    putProduct(catalogue, { ...product, stock: product.stock + 1 });
+  }
+  return true;
+}
+
+export function keepHeldUnit(catalogue: MerchantCatalogue, orderId: string, sku: string): boolean {
+  if (heldBy(catalogue, orderId) !== sku) {
+    return false;
+  }
+  delete catalogue.reservations[orderId];
+  return true;
+}
+
 export function orderReservation(
   store: CatalogueStore,
   orderId: string,
@@ -36,15 +59,9 @@ export function orderReservation(
     },
     release: () => {
       const catalogue = store.load();
-      if (heldBy(catalogue, orderId) !== sku) {
-        return;
+      if (returnHeldUnit(catalogue, orderId, sku)) {
+        store.save(catalogue);
       }
-      delete catalogue.reservations[orderId];
-      const product = findProduct(catalogue, sku);
-      if (product !== undefined) {
-        putProduct(catalogue, { ...product, stock: product.stock + 1 });
-      }
-      store.save(catalogue);
     },
   };
 }

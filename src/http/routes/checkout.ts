@@ -1,4 +1,4 @@
-import type { Payment } from "@bu-payment/node-sdk";
+import type { BuPaymentError, Checkout, Payment } from "@bu-payment/node-sdk";
 import type { RequestHandler, Response } from "express";
 import { z } from "zod";
 import { findProduct } from "../../catalogue/merchant";
@@ -23,7 +23,12 @@ export function checkoutRoute(context: AppContext): RequestHandler {
       });
       return;
     }
-    const result = await sell(context.bupayment, context.catalogue, body.data);
+    const result = await sell(
+      context.bupayment,
+      context.catalogue,
+      body.data,
+      context.hostedCheckout,
+    );
     answer(context, response, body.data, result);
   };
 }
@@ -37,6 +42,31 @@ function answer(context: AppContext, response: Response, order: Order, result: C
         orderId,
         payment: paymentView(result.payment),
         stock: findProduct(context.catalogue.load(), order.sku)?.stock ?? 0,
+      });
+      return;
+    case "checkout_open":
+      context.logger.info("Hosted checkout opened", {
+        orderId,
+        sku: order.sku,
+        checkoutId: result.checkout.id,
+      });
+      response.status(201).json({
+        orderId,
+        checkout: checkoutView(result.checkout),
+        checkoutUrl: result.checkout.checkoutUrl ?? null,
+        stock: findProduct(context.catalogue.load(), order.sku)?.stock ?? 0,
+      });
+      return;
+    case "checkout_refused":
+      context.logger.error("Hosted checkout refused", {
+        orderId,
+        sku: order.sku,
+        ...failureOf(result.error),
+      });
+      response.status(502).json({
+        code: "checkout_refused",
+        message: "BuPayment refused the hosted checkout.",
+        reason: apiErrorOf(result.error),
       });
       return;
     case "price_changed":
@@ -66,8 +96,7 @@ function answer(context: AppContext, response: Response, order: Order, result: C
       context.logger.error("Payment needs reconciliation", {
         orderId,
         sku: order.sku,
-        code: result.error.code,
-        ...(result.error.requestId === undefined ? {} : { requestId: result.error.requestId }),
+        ...failureOf(result.error),
       });
       response.status(202).json({
         orderId,
@@ -88,11 +117,34 @@ function paymentView({ id, status, amount, currency }: Payment) {
   return { id, status, amount, currency };
 }
 
+function checkoutView({ id, status, amount, currency, expiresAt }: Checkout) {
+  return { id, status, amount, currency, expiresAt };
+}
+
+function apiErrorOf(error: BuPaymentError): string | null {
+  const apiError = error.metadata?.apiError;
+  return typeof apiError === "string" ? apiError : null;
+}
+
+function failureOf(error: BuPaymentError) {
+  const apiError = apiErrorOf(error);
+  return {
+    code: error.code,
+    ...(apiError === null ? {} : { apiError }),
+    ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
+  };
+}
+
 function refuse(response: Response, reason: CheckoutRefusal | "out_of_stock") {
   response
-    .status(reason === "product_not_found" ? 404 : 409)
+    .status(REFUSAL_STATUS[reason] ?? 409)
     .json({ code: reason, message: CHECKOUT_REFUSALS[reason] });
 }
+
+const REFUSAL_STATUS: Partial<Record<CheckoutRefusal | "out_of_stock", number>> = {
+  product_not_found: 404,
+  checkout_not_configured: 503,
+};
 
 const CHECKOUT_REFUSALS: Record<CheckoutRefusal | "out_of_stock", string> = {
   product_not_found: "No such local product.",
@@ -100,4 +152,7 @@ const CHECKOUT_REFUSALS: Record<CheckoutRefusal | "out_of_stock", string> = {
   price_unknown: "No price has been shown for this product yet. Load the catalogue first.",
   order_mismatch: "That orderId already belongs to another product.",
   out_of_stock: "The product is out of stock.",
+  checkout_closed: "That order's checkout is already settled. Use a new orderId.",
+  checkout_not_configured:
+    "The provider needs a hosted checkout and no checkout destination is configured.",
 };
