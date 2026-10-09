@@ -19,7 +19,8 @@ catalogue webhooks, and changes a linked price through BuPayment first. See [Cat
 
 It sells a linked product at the price the storefront displayed, and BuPayment refuses the charge
 when the canonical price changed since ([api#444](https://github.com/Bu-Payment/api/issues/444)).
-See [Checkout](#checkout).
+When the provider cannot charge directly, it opens a hosted one-time checkout instead and settles the
+order from the `checkout.*` webhooks. See [Checkout](#checkout).
 
 ## Run locally
 
@@ -44,8 +45,9 @@ The server listens on <http://127.0.0.1:9003>. Port 9003 avoids the API on 3000,
 
 ## Configuration
 
-Every variable is required except `HOST`, `PORT`, `CATALOGUE_STORE_PATH` and
-`BUPAYMENT_WEBHOOK_SECRET`; a blank one counts as unset. Boot happens in two stages, and the error you
+Every variable is required except `HOST`, `PORT`, `CATALOGUE_STORE_PATH`,
+`BUPAYMENT_WEBHOOK_SECRET`, `BUPAYMENT_CHECKOUT_DESTINATION` and `BUPAYMENT_CHECKOUT_PROVIDER`; a
+blank one counts as unset. Boot happens in two stages, and the error you
 get says which stage failed. First the environment is checked for shape: a missing or malformed
 variable aborts with one message naming every offending variable at once, in alphabetical order.
 Only then does the SDK check the credentials themselves, and that check stops at the first problem
@@ -74,7 +76,7 @@ live by configuration alone.
 | `PUT /products/:sku/link` | Links a local product to a BuPayment product and price |
 | `PUT /products/:sku/price` | Changes a price; a linked one changes in BuPayment first |
 | `POST /checkout` | Sells one unit of a linked product at the displayed price |
-| `POST /webhooks/bupayment` | Receives BuPayment catalogue events |
+| `POST /webhooks/bupayment` | Receives BuPayment catalogue and checkout events |
 
 Anything else answers `404 route_not_found`. A request body is parsed as JSON up to 64kb, except the
 webhook, which reads up to 256kb of raw bytes; a malformed body answers `400 request_invalid` and one
@@ -91,7 +93,7 @@ because it can quote whatever the request carried.
 | `POST /products` | `422 product_invalid`, `409 product_exists` |
 | `PUT /products/:sku/link` | `422 link_invalid`, `404 product_not_found` (local SKU), `422 price_not_of_product`, `422 inactive`; a BuPayment ID this application cannot see surfaces as the SDK's `404 resource_not_found` |
 | `PUT /products/:sku/price` | `422 price_invalid` (an amount only; the currency never changes), `404 product_not_found`, `409 product_changed`; a failure reading or creating the BuPayment price surfaces as the SDK's status and code |
-| `POST /checkout` | `422 checkout_invalid`, `404 product_not_found`, `409 not_sellable`, `409 price_unknown`, `409 order_mismatch`, `409 out_of_stock`, `409 price_changed`; any other failure creating the customer or the payment surfaces as the SDK's status and code |
+| `POST /checkout` | `422 checkout_invalid`, `404 product_not_found`, `409 not_sellable`, `409 price_unknown`, `409 order_mismatch`, `409 out_of_stock`, `409 price_changed`, `409 checkout_closed`, `503 checkout_not_configured`, `502 checkout_refused`; any other failure creating the customer or the payment surfaces as the SDK's status and code |
 | `POST /webhooks/bupayment` | `503 webhook_not_configured`, `400` with the SDK's `webhook_*` code for a refused delivery |
 
 The merchant routes have no authorization. That is acceptable only because the playground binds to
@@ -207,7 +209,7 @@ change stands.
 ### Webhooks
 
 Set `BUPAYMENT_WEBHOOK_SECRET` to the `whsec_` value issued for the endpoint, and subscribe the
-endpoint to the `catalogue.*` events. The playground has no registration script: [Testing
+endpoint to the `catalogue.*` and `checkout.*` events (the checkout names carry no `.v1`). The playground has no registration script: [Testing
 locally](https://github.com/Bu-Payment/api/blob/main/docs/webhooks/09-testing-locally.md) in the
 [BuPayment webhook guide](https://github.com/Bu-Payment/api/blob/main/docs/webhooks/00-index.md)
 registers this receiver with the SDK, triggers each catalogue event, and shows how to inspect and
@@ -215,8 +217,8 @@ redeliver the deliveries.
 
 `POST /webhooks/bupayment` is mounted with a raw-body parser ahead of the global JSON parser,
 because the signature covers `${timestamp}.${rawBody}` and re-serializing a parsed body does not
-reproduce those bytes. The SDK verifies the signature and the timestamp window and returns a typed
-event; a type it does not know is recorded and ignored.
+reproduce those bytes. The SDK's `webhookDelivery().secret(s).body(raw).headers(h).verify()`
+checks the signature and the timestamp window and returns a typed event; a type it does not know is recorded and ignored.
 
 - **Deduplication.** Retries are recognized by `x-webhook-id` and the same event through another
   endpoint by the envelope `id`. Both are recorded in the same write that applies the event, so an
@@ -250,10 +252,9 @@ bupayment.sales
 ```
 
 The sale finds or creates the customer by email, asserts the displayed price, reserves and releases
-the stock through the playground's hooks, and answers with a typed outcome. The Node SDK's only
-hosted checkout is for subscriptions, so the payment is direct (`POST /v1/payments`). The public
-checkout a browser uses needs a publishable key and lives in the
-[browser playground](https://github.com/Bu-Payment/playground).
+the stock through the playground's hooks, and answers with a typed outcome. The payment is direct
+(`POST /v1/payments`) when the provider supports it, and a hosted one-time checkout otherwise: see
+[Hosted checkout](#hosted-checkout).
 
 **The displayed price.** It is read from the merchant's catalogue and never from BuPayment: the
 `stored` amount, or for a `live` product the `lastKnown` value that `GET /catalogue` records each time
@@ -292,8 +293,68 @@ does not reach the stock, since the playground does not consume payment events. 
 quantity: the API takes one canonical price per payment.
 
 The credential needs `payments:write`, `customers:read` and `customers:write` on top of the
-catalogue capabilities. The provider has to support direct charges; one that only offers a hosted
-one-time checkout refuses the payment, and the SDK's code and status reach the caller as they are.
+catalogue capabilities.
+
+### Hosted checkout
+
+A provider without server-side charges (Trust My Travel, SISP) makes the sale fail with
+`operation_failed` and `metadata.apiError` `provider_capability_not_supported`. The playground then
+holds the unit by `orderId` and opens a one-time checkout (`POST /v1/checkouts`):
+
+```ts
+bupayment.checkout
+  .sessionDraft()
+  .priceId(order.priceId)
+  .expectedPrice(order.shown)
+  .customerEmail(order.email)
+  .destination(settings.destination)
+  .reference(order.orderId)
+  .idempotencyKey(order.orderId)
+  .provider(settings.provider)
+  .create();
+```
+
+The `.provider(...)` step is added only when `BUPAYMENT_CHECKOUT_PROVIDER` is set.
+
+`BUPAYMENT_CHECKOUT_DESTINATION` is the slug of a checkout destination of the App, configured in the
+dashboard with its success and cancel URLs; without it this case answers
+`503 checkout_not_configured`. A Test environment may have no default provider, so set
+`BUPAYMENT_CHECKOUT_PROVIDER` (for example `trust-my-travel`). The API accepts one-time prices and
+Test credentials only.
+
+The answer is `201` with `checkoutUrl`, where the buyer pays: for Trust My Travel a page hosted by
+the API that opens the provider's modal and returns to the destination's URLs, for SISP the provider's
+form. The URL is a bearer credential: the playground neither logs nor stores it.
+
+```json
+{
+  "orderId": "A1",
+  "checkout": { "id": "chk_1", "status": "pending", "amount": 2750, "currency": "EUR", "expiresAt": "..." },
+  "checkoutUrl": "https://.../public/v1/checkouts/pay/...",
+  "stock": 2
+}
+```
+
+The catalogue records which order each checkout belongs to. A retry with the same `orderId` goes
+straight back to the checkout, without trying the sale again, and the idempotency key returns the same
+checkout; once that checkout has settled, the order answers `409 checkout_closed`. A refusal
+(`checkout_destination_unavailable`, `checkout_provider_unknown`, `checkout_live_not_enabled`,
+`checkout_unavailable`, `checkout_provider_failed`) gives the unit back and answers
+`502 checkout_refused` with the API code as `reason`; a changed price answers `409 price_changed` as
+above. A timeout, network failure or other 5xx may hide a created checkout, so the unit stays held and
+the answer is `202 confirming`.
+
+The webhook settles the unit, once per `checkoutId`:
+
+| Event | Stock |
+| --- | --- |
+| `checkout.completed` | the held unit becomes a sale |
+| `checkout.failed`, `checkout.expired`, `checkout.cancelled` | the held unit goes back |
+| `checkout.completed` after a release | still a sale: one unit is taken again, or the delivery is logged as `oversold` when none is left |
+
+A later event for a settled checkout is logged as `already_settled`. A checkout the playground never
+recorded is adopted through the order its `reference` holds, and one whose `reference` names another
+order is logged as `reference_mismatch` and left alone.
 
 ## Secret handling
 
@@ -317,7 +378,7 @@ quoting the secret leave it in no log line or response.
 ```
 src/runtime       framework-agnostic: environment parsing, SDK configuration, error mapping
 src/catalogue     framework-agnostic: the merchant catalogue, its link to BuPayment, reconciliation
-src/checkout      framework-agnostic: selling a linked product at the displayed price
+src/checkout      framework-agnostic: selling at the displayed price, hosted checkout, settlement
 src/http          the Express adapter, and the only place that imports Express
 src/main.ts       boots the runtime and starts the HTTP server
 src/reconcile.ts  runs one reconciliation sweep and exits
