@@ -1,5 +1,5 @@
 import type { Server } from "node:http";
-import { createServer } from "node:net";
+import { type AddressInfo, createServer } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { startServer } from "../../src/http/server";
 import { testContext } from "../fixtures";
@@ -37,15 +37,12 @@ afterEach(async () => {
 });
 
 describe("startServer", () => {
-  it("announces the address it was asked to bind", async () => {
-    const port = await occupyPort();
-    for (const blocker of running.splice(0)) {
-      blocker.close();
-    }
-
-    const { server, lines } = start(port);
+  it("announces the address it bound", async () => {
+    const { server, lines } = start(0);
     await settled(server);
 
+    const { port } = server.address() as AddressInfo;
+    expect(port).toBeGreaterThan(0);
     expect(JSON.parse(lines[0] ?? "{}")).toEqual({
       level: "info",
       message: "Playground is listening",
@@ -76,6 +73,8 @@ describe("startServer", () => {
     const { server, lines } = start(0, "::1");
     await settled(server);
 
-    expect(JSON.parse(lines[0] ?? "{}").url).toBe("http://[::1]:0");
+    expect(JSON.parse(lines[0] ?? "{}").url).toBe(
+      `http://[::1]:${(server.address() as AddressInfo).port}`,
+    );
   });
 });
