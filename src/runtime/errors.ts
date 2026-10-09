@@ -27,6 +27,11 @@ const CALLER_FAULT: FailureView = {
   message: "The request could not be read.",
 };
 
+export function apiErrorOf(error: unknown): string | null {
+  const apiError = error instanceof BuPaymentError ? error.metadata?.apiError : undefined;
+  return typeof apiError === "string" ? apiError : null;
+}
+
 export function describeFailure(error: unknown): FailureView {
   if (error instanceof BuPaymentError) {
     const { status, code } = publicError(error);

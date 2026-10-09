@@ -13,7 +13,7 @@ export interface HostedCheckoutApi {
   payments: PaymentsApi;
   directCharges: number;
   requests: CheckoutRequest[];
-  failure: Response | null;
+  failure: Response | "network" | null;
   fetch: FetchLike;
 }
 
@@ -41,6 +41,9 @@ export function fakeHostedCheckoutApi(
       const idempotencyKey = (init.headers as Record<string, string>)[Header.IDEMPOTENCY_KEY];
       const body = decodeBody(init.body) as Record<string, unknown>;
       api.requests.push({ body, idempotencyKey });
+      if (api.failure === "network") {
+        throw new TypeError("fetch failed");
+      }
       if (api.failure !== null) {
         return api.failure.clone();
       }

@@ -81,6 +81,21 @@ describe("POST /checkout through the hosted checkout", () => {
     });
   });
 
+  it("answers 202 confirming when the checkout may have been created", async () => {
+    const api = fakeHostedCheckoutApi();
+    api.failure = "network";
+    const { app } = appWith([TSHIRT], api.fetch, CHECKOUT_ENV);
+
+    const response = await request(app).post("/checkout").send(ORDER);
+
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({
+      orderId: "A1",
+      status: "confirming",
+      message: "The payment is not confirmed yet. Retry with the same orderId.",
+    });
+  });
+
   it("answers 409 for an order whose checkout already settled", async () => {
     const { app, store } = appWith([TSHIRT], fakeHostedCheckoutApi().fetch, CHECKOUT_ENV);
     await request(app).post("/checkout").send(ORDER);

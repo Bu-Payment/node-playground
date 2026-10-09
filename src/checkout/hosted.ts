@@ -8,6 +8,7 @@ import {
 } from "@bu-payment/node-sdk";
 import { defineOwnKey, type MerchantCatalogue, type OrderCheckout } from "../catalogue/merchant";
 import type { CatalogueStore } from "../catalogue/store";
+import { apiErrorOf } from "../runtime/errors";
 import { orderReservation } from "./reservation";
 
 export interface HostedCheckoutSettings {
@@ -42,21 +43,24 @@ export async function openHostedCheckout(
   if (!(await reservation.reserve())) {
     return { outcome: "unavailable" };
   }
+  const alreadyOpen = checkoutOfOrder(store.load(), order.orderId) !== undefined;
   let checkout: Checkout;
   try {
     checkout = await createCheckout(bupayment, order, settings);
   } catch (error) {
-    if (error instanceof BuPaymentError && mayHaveBeenCreated(error)) {
+    if (!(error instanceof BuPaymentError)) {
+      throw error;
+    }
+    if (mayHaveBeenCreated(error)) {
       return { outcome: "unconfirmed", error };
     }
-    await reservation.release();
+    if (!alreadyOpen) {
+      await reservation.release();
+    }
     if (isPriceChanged(error)) {
       return { outcome: "price_changed", shown: order.shown, current: error.price ?? null };
     }
-    if (error instanceof BuPaymentError) {
-      return { outcome: "checkout_refused", error };
-    }
-    throw error;
+    return { outcome: "checkout_refused", error };
   }
   recordCheckout(store, checkout.id, { orderId: order.orderId, sku: order.sku, settled: null });
   return { outcome: "checkout_open", checkout };
@@ -86,8 +90,8 @@ async function createCheckout(
 }
 
 function mayHaveBeenCreated(error: BuPaymentError): boolean {
-  const apiError = error.metadata?.apiError;
-  if (typeof apiError === "string" && DEFINITE_REFUSALS.has(apiError)) {
+  const apiError = apiErrorOf(error);
+  if (apiError !== null && DEFINITE_REFUSALS.has(apiError)) {
     return false;
   }
   return (

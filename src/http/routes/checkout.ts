@@ -4,6 +4,7 @@ import { z } from "zod";
 import { findProduct } from "../../catalogue/merchant";
 import { type CheckoutRefusal, type CheckoutResult, type Order, sell } from "../../checkout/sale";
 import type { AppContext } from "../../runtime/context";
+import { apiErrorOf } from "../../runtime/errors";
 
 const OrderBody = z
   .object({
@@ -119,11 +120,6 @@ function paymentView({ id, status, amount, currency }: Payment) {
 
 function checkoutView({ id, status, amount, currency, expiresAt }: Checkout) {
   return { id, status, amount, currency, expiresAt };
-}
-
-function apiErrorOf(error: BuPaymentError): string | null {
-  const apiError = error.metadata?.apiError;
-  return typeof apiError === "string" ? apiError : null;
 }
 
 function failureOf(error: BuPaymentError) {

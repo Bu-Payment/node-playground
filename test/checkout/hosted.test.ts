@@ -153,6 +153,57 @@ describe("sell through the hosted checkout", () => {
     expect(store.load().checkouts).toEqual({});
   });
 
+  it("keeps the open checkout's unit when a retry of the order is refused", async () => {
+    const { api, stock, store, sell: sale } = setup();
+    await sale();
+    api.failure = Response.json(
+      { error: "idempotency_key_reused", message: "Different body" },
+      { status: 422 },
+    );
+
+    expect(await sale()).toMatchObject({ outcome: "checkout_refused" });
+    expect(stock()).toBe(2);
+    expect(store.load().reservations).toEqual({ A1: "TSHIRT" });
+  });
+
+  it.each([
+    ["the network fails", "network" as const],
+    [
+      "another request with the key is in progress",
+      Response.json({ error: "idempotency_in_progress", message: "Wait" }, { status: 409 }),
+    ],
+  ])("keeps the unit held when %s", async (_, failure) => {
+    const api = fakeHostedCheckoutApi();
+    api.failure = failure;
+    const { stock, sell: sale } = setup({}, api);
+
+    expect(await sale()).toMatchObject({ outcome: "unconfirmed" });
+    expect(stock()).toBe(2);
+  });
+
+  it("charges directly when the provider can, even with a checkout configured", async () => {
+    const api = fakeHostedCheckoutApi();
+    api.payments.failure = null;
+    const { stock, sell: sale } = setup({}, api);
+
+    expect(await sale()).toMatchObject({ outcome: "paid" });
+    expect(api.requests).toEqual([]);
+    expect(stock()).toBe(2);
+  });
+
+  it("lets any other direct failure through rather than opening a checkout", async () => {
+    const api = fakeHostedCheckoutApi();
+    api.payments.failure = Response.json(
+      { error: "payment_method_required", message: "No method" },
+      { status: 422 },
+    );
+    const { stock, sell: sale } = setup({}, api);
+
+    await expect(sale()).rejects.toMatchObject({ name: "BuPaymentError", status: 422 });
+    expect(api.requests).toEqual([]);
+    expect(stock()).toBe(3);
+  });
+
   it("keeps the unit held when the checkout may have been created", async () => {
     const {
       stock,

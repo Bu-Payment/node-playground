@@ -1,11 +1,7 @@
-import {
-  type BuPaymentClient,
-  BuPaymentError,
-  type ExpectedPrice,
-  type SaleResult,
-} from "@bu-payment/node-sdk";
+import type { BuPaymentClient, ExpectedPrice, SaleResult } from "@bu-payment/node-sdk";
 import { findProduct, isSellable, type MerchantProduct } from "../catalogue/merchant";
 import type { CatalogueStore } from "../catalogue/store";
+import { apiErrorOf } from "../runtime/errors";
 import {
   checkoutOfOrder,
   type HostedCheckoutResult,
@@ -92,10 +88,7 @@ export async function sell(
 }
 
 function cannotChargeDirectly(error: unknown): boolean {
-  return (
-    error instanceof BuPaymentError &&
-    error.metadata?.apiError === "provider_capability_not_supported"
-  );
+  return apiErrorOf(error) === "provider_capability_not_supported";
 }
 
 function shownPrice(product: MerchantProduct): ExpectedPrice | null {
