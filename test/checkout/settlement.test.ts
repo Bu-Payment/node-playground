@@ -94,6 +94,16 @@ describe("settleCheckout", () => {
     expect(catalogue.checkouts.chk_1).toEqual({ orderId: "A1", sku: "TSHIRT", settled: "sold" });
   });
 
+  it("adopts nothing for an order that already has a checkout", () => {
+    const catalogue = heldOrder();
+
+    expect(
+      settleAll(catalogue, checkoutEvent("checkout.expired", { checkoutId: "chk_2" })),
+    ).toEqual(["unknown_checkout"]);
+    expect(catalogue.products.TSHIRT?.stock).toBe(2);
+    expect(catalogue.checkouts).not.toHaveProperty("chk_2");
+  });
+
   it("leaves a checkout it cannot place untouched", () => {
     const catalogue = heldOrder();
     const before = structuredClone(catalogue);

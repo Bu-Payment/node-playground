@@ -6,6 +6,7 @@ import {
   type OrderCheckout,
   putProduct,
 } from "../catalogue/merchant";
+import { checkoutOfOrder } from "./hosted";
 import { heldBy, keepHeldUnit, returnHeldUnit } from "./reservation";
 
 export type SettlementOutcome =
@@ -15,6 +16,10 @@ export type SettlementOutcome =
   | "already_settled"
   | "reference_mismatch"
   | "unknown_checkout";
+
+export function movedStock(outcome: SettlementOutcome): boolean {
+  return outcome === "sold" || outcome === "released" || outcome === "oversold";
+}
 
 export function isCheckoutEvent(event: WebhookEvent): event is CheckoutEvent {
   return event.type.startsWith("checkout.");
@@ -72,7 +77,11 @@ function placedCheckout(
     return catalogue.checkouts[checkoutId];
   }
   const sku = reference === null ? undefined : heldBy(catalogue, reference);
-  if (reference === null || sku === undefined) {
+  if (
+    reference === null ||
+    sku === undefined ||
+    checkoutOfOrder(catalogue, reference) !== undefined
+  ) {
     return undefined;
   }
   const adopted: OrderCheckout = { orderId: reference, sku, settled: null };

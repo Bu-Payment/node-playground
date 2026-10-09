@@ -93,7 +93,7 @@ because it can quote whatever the request carried.
 | `POST /products` | `422 product_invalid`, `409 product_exists` |
 | `PUT /products/:sku/link` | `422 link_invalid`, `404 product_not_found` (local SKU), `422 price_not_of_product`, `422 inactive`; a BuPayment ID this application cannot see surfaces as the SDK's `404 resource_not_found` |
 | `PUT /products/:sku/price` | `422 price_invalid` (an amount only; the currency never changes), `404 product_not_found`, `409 product_changed`; a failure reading or creating the BuPayment price surfaces as the SDK's status and code |
-| `POST /checkout` | `422 checkout_invalid`, `404 product_not_found`, `409 not_sellable`, `409 price_unknown`, `409 order_mismatch`, `409 out_of_stock`, `409 price_changed`, `409 checkout_closed`, `503 checkout_not_configured`, `502 checkout_refused`; any other failure creating the customer or the payment surfaces as the SDK's status and code |
+| `POST /checkout` | `422 checkout_invalid`, `404 product_not_found`, `409 not_sellable`, `409 price_unknown`, `409 order_mismatch`, `409 out_of_stock`, `409 price_changed`, `409 checkout_closed`, `503 checkout_not_configured`, `502 checkout_refused` (`202 confirming` when a checkout may have been created); any other failure creating the customer or the payment surfaces as the SDK's status and code |
 | `POST /webhooks/bupayment` | `503 webhook_not_configured`, `400` with the SDK's `webhook_*` code for a refused delivery |
 
 The merchant routes have no authorization. That is acceptable only because the playground binds to
@@ -339,8 +339,9 @@ The catalogue records which order each checkout belongs to. A retry with the sam
 straight back to the checkout, without trying the sale again, and the idempotency key returns the same
 checkout; once that checkout has settled, the order answers `409 checkout_closed`. A refusal
 (`checkout_destination_unavailable`, `checkout_provider_unknown`, `checkout_live_not_enabled`,
-`checkout_unavailable`, `checkout_provider_failed`) gives the unit back and answers
-`502 checkout_refused` with the API code as `reason`; a changed price answers `409 price_changed` as
+`checkout_unavailable`, `checkout_provider_failed`) gives the unit back, unless the order already
+has an open checkout that still holds it, and answers `502 checkout_refused` with the API code as
+`reason`; a changed price answers `409 price_changed` as
 above. A timeout, network failure or other 5xx may hide a created checkout, so the unit stays held and
 the answer is `202 confirming`.
 
@@ -353,8 +354,9 @@ The webhook settles the unit, once per `checkoutId`:
 | `checkout.completed` after a release | still a sale: one unit is taken again, or the delivery is logged as `oversold` when none is left |
 
 A later event for a settled checkout is logged as `already_settled`. A checkout the playground never
-recorded is adopted through the order its `reference` holds, and one whose `reference` names another
-order is logged as `reference_mismatch` and left alone.
+recorded is adopted through the order its `reference` holds, when that order has no checkout yet;
+otherwise it is logged as `unknown_checkout`. One whose `reference` names another order is logged as
+`reference_mismatch`. A delivery that moved no stock answers `ignored`, one that did `applied`.
 
 ## Secret handling
 

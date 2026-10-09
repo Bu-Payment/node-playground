@@ -6,7 +6,12 @@ import {
   type Product,
   type VerifiedWebhookDelivery,
 } from "@bu-payment/node-sdk";
-import { isCheckoutEvent, type SettlementOutcome, settleCheckout } from "../checkout/settlement";
+import {
+  isCheckoutEvent,
+  movedStock,
+  type SettlementOutcome,
+  settleCheckout,
+} from "../checkout/settlement";
 import { collect } from "./collect";
 import { applyCatalogueEvent, defaultPriceIdOf } from "./events";
 import { indexRemote, type LinkOutcome, syncLink } from "./link-sync";
@@ -59,7 +64,7 @@ export async function receiveDelivery(
   if (isCheckoutEvent(event)) {
     const settlement = settleCheckout(local, event);
     store.save(local);
-    return { ...report, settlement };
+    return { ...report, outcome: movedStock(settlement) ? "applied" : "ignored", settlement };
   }
   const awaiting: string[] = [];
   for (const product of Object.values(local.products)) {
