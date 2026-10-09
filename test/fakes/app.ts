@@ -4,9 +4,10 @@ import { memoryStore } from "../../src/catalogue/store";
 import { createApp } from "../../src/http/app";
 import type { EnvSource } from "../../src/runtime/env";
 import { testContext } from "../fixtures";
+import { serve } from "../serve";
 import { unreachableApi } from "./catalogue-api";
 
-export function appWith(
+export async function appWith(
   products: MerchantProduct[],
   fetch: FetchLike = unreachableApi(),
   env: EnvSource = {},
@@ -17,5 +18,5 @@ export function appWith(
   }
   const store = memoryStore(catalogue);
   const { context, lines } = testContext(env, { fetch });
-  return { app: createApp({ ...context, catalogue: store }), store, lines };
+  return { app: await serve(createApp({ ...context, catalogue: store })), store, lines };
 }

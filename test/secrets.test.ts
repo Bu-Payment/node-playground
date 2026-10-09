@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type FetchLike, Header } from "@bu-payment/node-sdk";
-import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { runReconciliation } from "../src/catalogue/command";
 import { emptyCatalogue, putProduct } from "../src/catalogue/merchant";
@@ -14,6 +13,7 @@ import { link, merchantProduct } from "./fakes/merchant";
 import { fakePaymentsApi, oneTimeCatalogue } from "./fakes/payments-api";
 import { productEvent, signed, WEBHOOK_SECRET } from "./fakes/webhook";
 import { FAKE_SECRET, testContext, testLogger, VALID_ENV } from "./fixtures";
+import { serve } from "./serve";
 
 const directories: string[] = [];
 
@@ -93,9 +93,9 @@ describe("the confidential secret", () => {
       }),
     );
     const { context, lines } = testContext({}, { fetch });
-    const app = createApp({ ...context, catalogue: memoryStore(catalogue) });
+    const app = await serve(createApp({ ...context, catalogue: memoryStore(catalogue) }));
 
-    const response = await request(app).get("/catalogue");
+    const response = await app.get("/catalogue");
 
     expect(response.status).toBe(200);
     expect(response.text).not.toContain(FAKE_SECRET);
@@ -104,15 +104,15 @@ describe("the confidential secret", () => {
 
   it("stays out of the log and the responses of every catalogue route", async () => {
     const { context, lines } = testContext();
-    const app = createApp(context);
+    const app = await serve(createApp(context));
 
     const responses = await Promise.all([
-      request(app).get("/catalogue"),
-      request(app).post("/products").send({ sku: FAKE_SECRET, title: FAKE_SECRET }),
-      request(app)
+      app.get("/catalogue"),
+      app.post("/products").send({ sku: FAKE_SECRET, title: FAKE_SECRET }),
+      app
         .put(`/products/${FAKE_SECRET}/link`)
         .send({ productId: FAKE_SECRET, priceId: FAKE_SECRET, pricing: "stored" }),
-      request(app).post("/products").set("Content-Type", "application/json").send("{"),
+      app.post("/products").set("Content-Type", "application/json").send("{"),
     ]);
 
     expect(responses.map((response) => response.text).join("\n")).not.toContain(FAKE_SECRET);
@@ -123,9 +123,9 @@ describe("the confidential secret", () => {
     Object.entries(leakingFailures),
   )("stays out of the checkout response and log when BuPayment fails with %s", async (_, fetch) => {
     const { context, lines } = testContext({}, { fetch });
-    const app = createApp({ ...context, catalogue: memoryStore(sellableCatalogue()) });
+    const app = await serve(createApp({ ...context, catalogue: memoryStore(sellableCatalogue()) }));
 
-    const response = await request(app)
+    const response = await app
       .post("/checkout")
       .send({ orderId: "A1", sku: "TSHIRT", email: "buyer@example.test" });
 
@@ -137,16 +137,12 @@ describe("the confidential secret", () => {
   it("stays out of the checkout refusals and the requests that sign them", async () => {
     const api = fakePaymentsApi(oneTimeCatalogue(3000));
     const { context, lines } = testContext({}, { fetch: api.fetch });
-    const app = createApp({ ...context, catalogue: memoryStore(sellableCatalogue()) });
+    const app = await serve(createApp({ ...context, catalogue: memoryStore(sellableCatalogue()) }));
 
     const responses = await Promise.all([
-      request(app)
-        .post("/checkout")
-        .send({ orderId: "A1", sku: "TSHIRT", email: "buyer@example.test" }),
-      request(app)
-        .post("/checkout")
-        .send({ orderId: FAKE_SECRET, sku: FAKE_SECRET, email: FAKE_SECRET }),
-      request(app).post("/checkout").set("Content-Type", "application/json").send("{"),
+      app.post("/checkout").send({ orderId: "A1", sku: "TSHIRT", email: "buyer@example.test" }),
+      app.post("/checkout").send({ orderId: FAKE_SECRET, sku: FAKE_SECRET, email: FAKE_SECRET }),
+      app.post("/checkout").set("Content-Type", "application/json").send("{"),
     ]);
 
     expect(responses.map((response) => response.status)).toEqual([409, 422, 400]);
@@ -169,8 +165,8 @@ describe("the confidential secret", () => {
     const withoutProvider = testContext({}, { fetch: api.fetch });
 
     const responses = await Promise.all(
-      [withProvider, withoutProvider].map(({ context }) =>
-        request(createApp({ ...context, catalogue: memoryStore(sellableCatalogue()) }))
+      [withProvider, withoutProvider].map(async ({ context }) =>
+        (await serve(createApp({ ...context, catalogue: memoryStore(sellableCatalogue()) })))
           .post("/checkout")
           .send(order),
       ),
@@ -185,7 +181,7 @@ describe("the confidential secret", () => {
 
   it("keeps the webhook endpoint secret out of the log and every webhook response", async () => {
     const { context, lines } = testContext({ BUPAYMENT_WEBHOOK_SECRET: WEBHOOK_SECRET });
-    const app = createApp(context);
+    const app = await serve(createApp(context));
     const event = productEvent(
       "catalogue.product.archived.v1",
       product({ id: "prod_1", active: false }),
@@ -193,12 +189,12 @@ describe("the confidential secret", () => {
     const valid = signed(event);
 
     const responses = await Promise.all([
-      request(app).post("/webhooks/bupayment").set(valid.headers).send(valid.body),
-      request(app)
+      app.post("/webhooks/bupayment").set(valid.headers).send(valid.body),
+      app
         .post("/webhooks/bupayment")
         .set({ ...valid.headers, "x-webhook-signature": WEBHOOK_SECRET })
         .send(valid.body),
-      request(app)
+      app
         .post("/webhooks/bupayment")
         .set(valid.headers)
         .send(valid.body.replace("prod_1", WEBHOOK_SECRET)),

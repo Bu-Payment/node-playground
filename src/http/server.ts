@@ -1,4 +1,5 @@
 import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import type { AppContext } from "../runtime/context";
 import { createApp } from "./app";
 
@@ -7,7 +8,7 @@ export function startServer(context: AppContext): Server {
   const server = createApp(context).listen(port, host);
   server.on("listening", () => {
     context.logger.info("Playground is listening", {
-      url: `http://${formatHost(host)}:${port}`,
+      url: `http://${formatHost(host)}:${(server.address() as AddressInfo).port}`,
       environment: context.client.environment,
     });
   });

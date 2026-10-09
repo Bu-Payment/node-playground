@@ -1,4 +1,3 @@
-import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { emptyCatalogue, isSellable, putProduct } from "../../src/catalogue/merchant";
 import { memoryStore } from "../../src/catalogue/store";
@@ -7,6 +6,7 @@ import { product } from "../fakes/catalogue-api";
 import { link, merchantProduct } from "../fakes/merchant";
 import { checkoutEvent, productEvent, signed, WEBHOOK_SECRET } from "../fakes/webhook";
 import { testContext } from "../fixtures";
+import { serve } from "../serve";
 
 const LATER = "2026-09-20T00:00:00.000Z";
 const ARCHIVED = productEvent(
@@ -14,23 +14,26 @@ const ARCHIVED = productEvent(
   product({ id: "prod_1", active: false, updatedAt: LATER }),
 );
 
-function webhookApp(secret: string | null = WEBHOOK_SECRET) {
+async function webhookApp(secret: string | null = WEBHOOK_SECRET) {
   const catalogue = emptyCatalogue();
   putProduct(catalogue, merchantProduct({ sku: "TICKET", bupayment: link() }));
   const store = memoryStore(catalogue);
   const { context, lines } = testContext(
     secret === null ? {} : { BUPAYMENT_WEBHOOK_SECRET: secret },
   );
-  return { app: createApp({ ...context, catalogue: store }), store, lines };
+  return { app: await serve(createApp({ ...context, catalogue: store })), store, lines };
 }
 
-function post(app: ReturnType<typeof webhookApp>["app"], delivery: ReturnType<typeof signed>) {
-  return request(app).post("/webhooks/bupayment").set(delivery.headers).send(delivery.body);
+function post(
+  app: Awaited<ReturnType<typeof webhookApp>>["app"],
+  delivery: ReturnType<typeof signed>,
+) {
+  return app.post("/webhooks/bupayment").set(delivery.headers).send(delivery.body);
 }
 
 describe("POST /webhooks/bupayment", () => {
   it("applies a signed delivery", async () => {
-    const { app, store, lines } = webhookApp();
+    const { app, store, lines } = await webhookApp();
 
     const response = await post(app, signed(ARCHIVED));
 
@@ -46,7 +49,7 @@ describe("POST /webhooks/bupayment", () => {
   });
 
   it("verifies the exact bytes received, not a re-serialized body", async () => {
-    const { app } = webhookApp();
+    const { app } = await webhookApp();
     const spaced = JSON.stringify(ARCHIVED, null, 2).replace("prod_1", "prod\\u005f1");
 
     const response = await post(app, signed(ARCHIVED, { body: spaced }));
@@ -56,7 +59,7 @@ describe("POST /webhooks/bupayment", () => {
   });
 
   it("refuses a tampered delivery and changes nothing", async () => {
-    const { app, store } = webhookApp();
+    const { app, store } = await webhookApp();
     const delivery = signed(ARCHIVED);
     const before = store.load();
 
@@ -71,7 +74,7 @@ describe("POST /webhooks/bupayment", () => {
   });
 
   it("logs a refused delivery by its code only", async () => {
-    const { app, lines } = webhookApp();
+    const { app, lines } = await webhookApp();
     const delivery = signed(ARCHIVED);
 
     await post(app, { ...delivery, body: `${delivery.body} ` });
@@ -82,7 +85,7 @@ describe("POST /webhooks/bupayment", () => {
   });
 
   it("answers 500 without applying when the delivery cannot be stored, so BuPayment retries", async () => {
-    const { app, store } = webhookApp();
+    const { app, store } = await webhookApp();
     store.save = () => {
       throw new Error("disk full");
     };
@@ -94,7 +97,7 @@ describe("POST /webhooks/bupayment", () => {
   });
 
   it("refuses a delivery signed with another secret", async () => {
-    const { app } = webhookApp();
+    const { app } = await webhookApp();
 
     const response = await post(app, signed(ARCHIVED, { secret: `whsec_${"x".repeat(40)}` }));
 
@@ -102,7 +105,7 @@ describe("POST /webhooks/bupayment", () => {
   });
 
   it("refuses a delivery outside the accepted time window", async () => {
-    const { app } = webhookApp();
+    const { app } = await webhookApp();
 
     const response = await post(app, signed(ARCHIVED, { timestamp: Date.now() - 3_600_000 }));
 
@@ -111,7 +114,7 @@ describe("POST /webhooks/bupayment", () => {
   });
 
   it("refuses a delivery that is not JSON bytes", async () => {
-    const { app } = webhookApp();
+    const { app } = await webhookApp();
     const delivery = signed(ARCHIVED);
 
     const response = await post(app, {
@@ -123,7 +126,7 @@ describe("POST /webhooks/bupayment", () => {
   });
 
   it("answers a replayed delivery once and then as a duplicate", async () => {
-    const { app } = webhookApp();
+    const { app } = await webhookApp();
     const delivery = signed(ARCHIVED, { deliveryId: "dlv_same" });
 
     const first = await post(app, delivery);
@@ -133,7 +136,7 @@ describe("POST /webhooks/bupayment", () => {
   });
 
   it("sells the held unit when the checkout completes", async () => {
-    const { app, store, lines } = webhookApp();
+    const { app, store, lines } = await webhookApp();
     const held = store.load();
     held.reservations.A1 = "TICKET";
     held.checkouts.chk_1 = { orderId: "A1", sku: "TICKET", settled: null };
@@ -153,7 +156,7 @@ describe("POST /webhooks/bupayment", () => {
   });
 
   it("gives the held unit back when the checkout expires, and ignores the replay of another id", async () => {
-    const { app, store, lines } = webhookApp();
+    const { app, store, lines } = await webhookApp();
     const held = store.load();
     held.reservations.A1 = "TICKET";
     held.checkouts.chk_1 = { orderId: "A1", sku: "TICKET", settled: null };
@@ -175,7 +178,7 @@ describe("POST /webhooks/bupayment", () => {
   });
 
   it("answers 503 when no endpoint secret is configured", async () => {
-    const { app } = webhookApp(null);
+    const { app } = await webhookApp(null);
 
     const response = await post(app, signed(ARCHIVED));
 

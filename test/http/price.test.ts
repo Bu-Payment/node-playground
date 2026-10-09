@@ -1,4 +1,3 @@
-import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { putProduct } from "../../src/catalogue/merchant";
 import { appWith } from "../fakes/app";
@@ -7,12 +6,12 @@ import { singlePriceApi, twoPriceApi } from "../fakes/price-change";
 
 describe("PUT /products/:sku/price", () => {
   it("changes a linked price through BuPayment", async () => {
-    const { app, store } = appWith(
+    const { app, store } = await appWith(
       [merchantProduct({ sku: "TICKET", bupayment: link() })],
       twoPriceApi().fetch,
     );
 
-    const response = await request(app).put("/products/TICKET/price").send({ amount: 1800 });
+    const response = await app.put("/products/TICKET/price").send({ amount: 1800 });
 
     expect(response.status).toBe(200);
     expect(response.body.archivePending).toBe(false);
@@ -22,12 +21,12 @@ describe("PUT /products/:sku/price", () => {
   it("reports and logs an archive left pending", async () => {
     const failing = twoPriceApi();
     failing.failArchive = true;
-    const { app, lines } = appWith(
+    const { app, lines } = await appWith(
       [merchantProduct({ sku: "TICKET", bupayment: link() })],
       failing.fetch,
     );
 
-    const response = await request(app).put("/products/TICKET/price").send({ amount: 1800 });
+    const response = await app.put("/products/TICKET/price").send({ amount: 1800 });
 
     expect(response.body.archivePending).toBe(true);
     expect(JSON.parse(lines[0] ?? "{}")).toEqual({
@@ -44,12 +43,12 @@ describe("PUT /products/:sku/price", () => {
   it("reports and logs a default price that could not move", async () => {
     const failing = singlePriceApi();
     failing.failDefaultPrice = true;
-    const { app, lines } = appWith(
+    const { app, lines } = await appWith(
       [merchantProduct({ sku: "TICKET", bupayment: link() })],
       failing.fetch,
     );
 
-    const response = await request(app).put("/products/TICKET/price").send({ amount: 1800 });
+    const response = await app.put("/products/TICKET/price").send({ amount: 1800 });
 
     expect(response.body.archivePending).toBe(true);
     expect(JSON.parse(lines[0] ?? "{}")).toEqual({
@@ -72,7 +71,7 @@ describe("PUT /products/:sku/price", () => {
   ])("answers 409 and logs the unused price when the product changed meanwhile (archive fails: %s)", async (archiveFails, logged) => {
     const fake = twoPriceApi();
     const linked = merchantProduct({ sku: "TICKET", bupayment: link() });
-    const { app, store, lines } = appWith([linked], fake.fetch);
+    const { app, store, lines } = await appWith([linked], fake.fetch);
     const load = store.load.bind(store);
     let loads = 0;
     store.load = () => {
@@ -85,7 +84,7 @@ describe("PUT /products/:sku/price", () => {
       return catalogue;
     };
 
-    const response = await request(app).put("/products/TICKET/price").send({ amount: 1800 });
+    const response = await app.put("/products/TICKET/price").send({ amount: 1800 });
 
     expect(response.status).toBe(409);
     expect(response.body.code).toBe("product_changed");
@@ -97,9 +96,9 @@ describe("PUT /products/:sku/price", () => {
   });
 
   it("answers 404 for an unknown SKU", async () => {
-    const { app } = appWith([], twoPriceApi().fetch);
+    const { app } = await appWith([], twoPriceApi().fetch);
 
-    const response = await request(app).put("/products/TICKET/price").send({ amount: 1800 });
+    const response = await app.put("/products/TICKET/price").send({ amount: 1800 });
 
     expect(response.status).toBe(404);
     expect(response.body.code).toBe("product_not_found");
@@ -111,9 +110,9 @@ describe("PUT /products/:sku/price", () => {
     { amount: 1800, currency: "USD" },
     {},
   ])("refuses %o", async (body) => {
-    const { app } = appWith([merchantProduct({ sku: "TICKET" })], twoPriceApi().fetch);
+    const { app } = await appWith([merchantProduct({ sku: "TICKET" })], twoPriceApi().fetch);
 
-    const response = await request(app).put("/products/TICKET/price").send(body);
+    const response = await app.put("/products/TICKET/price").send(body);
 
     expect(response.status).toBe(422);
     expect(response.body.code).toBe("price_invalid");

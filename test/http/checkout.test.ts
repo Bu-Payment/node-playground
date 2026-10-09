@@ -1,4 +1,3 @@
-import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { appWith } from "../fakes/app";
 import { link, merchantProduct } from "../fakes/merchant";
@@ -29,9 +28,9 @@ function failing(body: object, status: number) {
 
 describe("POST /checkout", () => {
   it("sells one unit at the displayed price", async () => {
-    const { app } = appWith([TSHIRT], fakePaymentsApi().fetch);
+    const { app } = await appWith([TSHIRT], fakePaymentsApi().fetch);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(201);
     expect(response.body).toEqual({
@@ -44,9 +43,9 @@ describe("POST /checkout", () => {
   it("reports a payment that did not succeed", async () => {
     const api = fakePaymentsApi();
     api.paymentStatus = "pending";
-    const { app } = appWith([TSHIRT], api.fetch);
+    const { app } = await appWith([TSHIRT], api.fetch);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(202);
     expect(response.body).toEqual({
@@ -57,9 +56,9 @@ describe("POST /checkout", () => {
   });
 
   it("asks the client to reload the price when BuPayment refuses a changed one", async () => {
-    const { app } = appWith([TSHIRT], fakePaymentsApi(oneTimeCatalogue(3000)).fetch);
+    const { app } = await appWith([TSHIRT], fakePaymentsApi(oneTimeCatalogue(3000)).fetch);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(409);
     expect(response.body).toEqual({
@@ -72,9 +71,9 @@ describe("POST /checkout", () => {
 
   it("answers a changed price with no current one when the API leaves it out", async () => {
     const api = failing({ error: "price_changed", message: "Changed" }, 409);
-    const { app } = appWith([TSHIRT], api.fetch);
+    const { app } = await appWith([TSHIRT], api.fetch);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(409);
     expect(response.body).toMatchObject({ code: "price_changed", current: null });
@@ -82,9 +81,9 @@ describe("POST /checkout", () => {
 
   it("tells the client to retry the same order when the payment is unconfirmed", async () => {
     const api = failing({ error: "operation_failed", message: "Down" }, 503);
-    const { app, lines } = appWith([TSHIRT], api.fetch);
+    const { app, lines } = await appWith([TSHIRT], api.fetch);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(202);
     expect(response.body).toEqual({
@@ -102,9 +101,9 @@ describe("POST /checkout", () => {
 
   it("puts an order BuPayment cannot settle under review and alerts the log", async () => {
     const api = failing({ error: "idempotency_outcome_unknown", message: "Unknown" }, 409);
-    const { app, lines } = appWith([TSHIRT], api.fetch);
+    const { app, lines } = await appWith([TSHIRT], api.fetch);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(202);
     expect(response.body).toEqual({
@@ -131,24 +130,22 @@ describe("POST /checkout", () => {
     ],
     [409, "out_of_stock", ORDER, merchantProduct({ ...TSHIRT, stock: 0 })],
   ] as const)("answers %i %s", async (status, code, body, local) => {
-    const { app } = appWith([local], fakePaymentsApi().fetch);
+    const { app } = await appWith([local], fakePaymentsApi().fetch);
 
-    const response = await request(app).post("/checkout").send(body);
+    const response = await app.post("/checkout").send(body);
 
     expect(response.status).toBe(status);
     expect(response.body).toEqual({ code, message: REFUSAL_MESSAGES[code] });
   });
 
   it("refuses to reuse an order for another product", async () => {
-    const { app } = appWith(
+    const { app } = await appWith(
       [TSHIRT, merchantProduct({ ...TSHIRT, sku: "MUG" })],
       fakePaymentsApi().fetch,
     );
 
-    await request(app).post("/checkout").send(ORDER);
-    const response = await request(app)
-      .post("/checkout")
-      .send({ ...ORDER, sku: "MUG" });
+    await app.post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send({ ...ORDER, sku: "MUG" });
 
     expect(response.status).toBe(409);
     expect(response.body).toEqual({
@@ -164,9 +161,9 @@ describe("POST /checkout", () => {
     [{ ...ORDER, orderId: "../A1" }],
     [{ ...ORDER, quantity: 2 }],
   ])("rejects an invalid order %j", async (body) => {
-    const { app } = appWith([TSHIRT], fakePaymentsApi().fetch);
+    const { app } = await appWith([TSHIRT], fakePaymentsApi().fetch);
 
-    const response = await request(app).post("/checkout").send(body);
+    const response = await app.post("/checkout").send(body);
 
     expect(response.status).toBe(422);
     expect(response.body.code).toBe("checkout_invalid");
@@ -174,9 +171,9 @@ describe("POST /checkout", () => {
 
   it("reports a provider refusal with the API's own code and gives the unit back", async () => {
     const api = failing({ error: "operation_failed", message: "No charges" }, 422);
-    const { app, store, lines } = appWith([TSHIRT], api.fetch);
+    const { app, store, lines } = await appWith([TSHIRT], api.fetch);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(422);
     expect(response.body).toEqual({

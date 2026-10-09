@@ -1,4 +1,3 @@
-import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { appWith } from "../fakes/app";
 import { CHECKOUT_URL, fakeHostedCheckoutApi, withoutDefaultProvider } from "../fakes/checkout-api";
@@ -21,9 +20,9 @@ const CHECKOUT_ENV = {
 describe("POST /checkout through the hosted checkout", () => {
   it("answers with the checkout URL and holds one unit", async () => {
     const api = fakeHostedCheckoutApi();
-    const { app, lines } = appWith([TSHIRT], api.fetch, CHECKOUT_ENV);
+    const { app, lines } = await appWith([TSHIRT], api.fetch, CHECKOUT_ENV);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(201);
     expect(response.body).toEqual({
@@ -46,9 +45,9 @@ describe("POST /checkout through the hosted checkout", () => {
   });
 
   it("answers 503 when the provider needs a checkout and no destination is configured", async () => {
-    const { app } = appWith([TSHIRT], fakeHostedCheckoutApi().fetch);
+    const { app } = await appWith([TSHIRT], fakeHostedCheckoutApi().fetch);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(503);
     expect(response.body).toEqual({
@@ -63,9 +62,9 @@ describe("POST /checkout through the hosted checkout", () => {
       { error: "checkout_live_not_enabled", message: "Live is not enabled" },
       { status: 409 },
     );
-    const { app, lines } = appWith([TSHIRT], api.fetch, CHECKOUT_ENV);
+    const { app, lines } = await appWith([TSHIRT], api.fetch, CHECKOUT_ENV);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(502);
     expect(response.body).toEqual({
@@ -84,9 +83,9 @@ describe("POST /checkout through the hosted checkout", () => {
   it("answers 202 confirming when the checkout may have been created", async () => {
     const api = fakeHostedCheckoutApi();
     api.failure = "network";
-    const { app } = appWith([TSHIRT], api.fetch, CHECKOUT_ENV);
+    const { app } = await appWith([TSHIRT], api.fetch, CHECKOUT_ENV);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(202);
     expect(response.body).toEqual({
@@ -97,13 +96,13 @@ describe("POST /checkout through the hosted checkout", () => {
   });
 
   it("answers 409 for an order whose checkout already settled", async () => {
-    const { app, store } = appWith([TSHIRT], fakeHostedCheckoutApi().fetch, CHECKOUT_ENV);
-    await request(app).post("/checkout").send(ORDER);
+    const { app, store } = await appWith([TSHIRT], fakeHostedCheckoutApi().fetch, CHECKOUT_ENV);
+    await app.post("/checkout").send(ORDER);
     const settled = store.load();
     settled.checkouts.chk_1 = { orderId: "A1", sku: "TSHIRT", settled: "sold" };
     store.save(settled);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(409);
     expect(response.body).toEqual({
@@ -114,9 +113,9 @@ describe("POST /checkout through the hosted checkout", () => {
 
   it("opens the checkout with the configured provider when the environment has no default", async () => {
     const api = withoutDefaultProvider(fakeHostedCheckoutApi());
-    const { app, lines } = appWith([TSHIRT], api.fetch, CHECKOUT_ENV);
+    const { app, lines } = await appWith([TSHIRT], api.fetch, CHECKOUT_ENV);
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(201);
     expect(response.body).toMatchObject({ checkoutUrl: CHECKOUT_URL, stock: 2 });
@@ -126,11 +125,11 @@ describe("POST /checkout through the hosted checkout", () => {
 
   it("answers 503 asking for a default provider when no checkout provider is configured", async () => {
     const api = withoutDefaultProvider(fakeHostedCheckoutApi());
-    const { app } = appWith([TSHIRT], api.fetch, {
+    const { app } = await appWith([TSHIRT], api.fetch, {
       BUPAYMENT_CHECKOUT_DESTINATION: "tours",
     });
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(503);
     expect(response.body).toEqual({
@@ -143,11 +142,11 @@ describe("POST /checkout through the hosted checkout", () => {
 
   it("answers 503 asking for a default provider when no checkout is configured", async () => {
     const api = withoutDefaultProvider(fakeHostedCheckoutApi());
-    const { app } = appWith([TSHIRT], api.fetch, {
+    const { app } = await appWith([TSHIRT], api.fetch, {
       BUPAYMENT_CHECKOUT_PROVIDER: "trust-my-travel",
     });
 
-    const response = await request(app).post("/checkout").send(ORDER);
+    const response = await app.post("/checkout").send(ORDER);
 
     expect(response.status).toBe(503);
     expect(response.body).toMatchObject({ code: "default_provider_not_configured" });
