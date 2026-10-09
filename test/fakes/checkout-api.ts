@@ -59,6 +59,14 @@ export function fakeHostedCheckoutApi(
   return api;
 }
 
+export function withoutDefaultProvider(api: HostedCheckoutApi): HostedCheckoutApi {
+  api.payments.failure = Response.json(
+    { error: "default_provider_not_configured", message: "Choose one for the environment." },
+    { status: 409 },
+  );
+  return api;
+}
+
 function openCheckout(sequence: number, body: Record<string, unknown>): Checkout {
   return {
     id: `chk_${sequence}`,

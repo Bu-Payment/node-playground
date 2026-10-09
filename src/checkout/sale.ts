@@ -23,7 +23,8 @@ export type CheckoutRefusal =
   | "price_unknown"
   | "order_mismatch"
   | "checkout_closed"
-  | "checkout_not_configured";
+  | "checkout_not_configured"
+  | "default_provider_not_configured";
 
 export type CheckoutResult =
   | SaleResult
@@ -77,12 +78,15 @@ export async function sell(
       await direct.flush();
       return result;
     } catch (error) {
-      const fallsBack = cannotChargeDirectly(error);
-      if (!fallsBack || hosted === null) {
+      const next = afterDirectFailure(error, hosted);
+      if (next !== "hosted") {
         await direct.flush();
       }
-      if (!fallsBack) {
+      if (next === null) {
         throw error;
+      }
+      if (next !== "hosted") {
+        return { outcome: "refused", reason: next };
       }
     }
   }
@@ -97,8 +101,20 @@ export async function sell(
   );
 }
 
-function cannotChargeDirectly(error: unknown): boolean {
-  return apiErrorOf(error) === "provider_capability_not_supported";
+function afterDirectFailure(
+  error: unknown,
+  hosted: HostedCheckoutSettings | null,
+): "hosted" | CheckoutRefusal | null {
+  switch (apiErrorOf(error)) {
+    case "provider_capability_not_supported":
+      return hosted === null ? "checkout_not_configured" : "hosted";
+    case "default_provider_not_configured":
+      return hosted === null || hosted.provider === null
+        ? "default_provider_not_configured"
+        : "hosted";
+    default:
+      return null;
+  }
 }
 
 function shownPrice(product: MerchantProduct): ExpectedPrice | null {

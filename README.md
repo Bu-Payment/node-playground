@@ -93,7 +93,7 @@ because it can quote whatever the request carried.
 | `POST /products` | `422 product_invalid`, `409 product_exists` |
 | `PUT /products/:sku/link` | `422 link_invalid`, `404 product_not_found` (local SKU), `422 price_not_of_product`, `422 inactive`; a BuPayment ID this application cannot see surfaces as the SDK's `404 resource_not_found` |
 | `PUT /products/:sku/price` | `422 price_invalid` (an amount only; the currency never changes), `404 product_not_found`, `409 product_changed`; a failure reading or creating the BuPayment price surfaces as the SDK's status and code |
-| `POST /checkout` | `422 checkout_invalid`, `404 product_not_found`, `409 not_sellable`, `409 price_unknown`, `409 order_mismatch`, `409 out_of_stock`, `409 price_changed`, `409 checkout_closed`, `503 checkout_not_configured`, `502 checkout_refused` (`202 confirming` when a checkout may have been created); any other failure creating the customer or the payment surfaces as the SDK's status and code |
+| `POST /checkout` | `422 checkout_invalid`, `404 product_not_found`, `409 not_sellable`, `409 price_unknown`, `409 order_mismatch`, `409 out_of_stock`, `409 price_changed`, `409 checkout_closed`, `503 checkout_not_configured`, `503 default_provider_not_configured`, `502 checkout_refused` (`202 confirming` when a checkout may have been created); any other failure creating the customer or the payment surfaces as the SDK's status and code |
 | `POST /webhooks/bupayment` | `503 webhook_not_configured`, `400` with the SDK's `webhook_*` code for a refused delivery |
 
 The merchant routes have no authorization. That is acceptable only because the playground binds to
@@ -277,6 +277,7 @@ expire them.
 | `unconfirmed` (timeout, network, 5xx) | `202` with `status: "confirming"`: retry with the same `orderId` | the unit stays held |
 | `needs_reconciliation` | `202` with `status: "under_review"`, logged as an error with the request ID | the unit stays held |
 | `unavailable` | `409 out_of_stock`, before any request to BuPayment | none taken |
+| no default provider and no `BUPAYMENT_CHECKOUT_PROVIDER` | `503 default_provider_not_configured` | the unit goes back |
 | any other failure | the status and code of `publicError` | the unit goes back |
 
 ```json
@@ -299,7 +300,11 @@ catalogue capabilities.
 
 A provider without server-side charges (Trust My Travel, SISP) makes the sale fail with
 `operation_failed` and `metadata.apiError` `provider_capability_not_supported`. The playground then
-holds the unit by `orderId` and opens a one-time checkout (`POST /v1/checkouts`):
+holds the unit by `orderId` and opens a one-time checkout (`POST /v1/checkouts`). An environment
+without a default provider makes the sale fail with `default_provider_not_configured`, since
+`POST /v1/payments` cannot name one; the playground then opens the checkout the same way when
+`BUPAYMENT_CHECKOUT_PROVIDER` is set, and otherwise gives the unit back and answers
+`503 default_provider_not_configured`, asking for a default provider:
 
 ```ts
 bupayment.checkout
@@ -319,7 +324,8 @@ The `.provider(...)` step is added only when `BUPAYMENT_CHECKOUT_PROVIDER` is se
 `BUPAYMENT_CHECKOUT_DESTINATION` is the slug of a checkout destination of the App, configured in the
 dashboard with its success and cancel URLs; without it this case answers
 `503 checkout_not_configured`. A Test environment may have no default provider, so set
-`BUPAYMENT_CHECKOUT_PROVIDER` (for example `trust-my-travel`). The API accepts one-time prices and
+`BUPAYMENT_CHECKOUT_PROVIDER` (for example `trust-my-travel`) or choose a default for the
+environment. The API accepts one-time prices and
 Test credentials only.
 
 The answer is `201` with `checkoutUrl`, where the buyer pays: for Trust My Travel a page hosted by
@@ -376,7 +382,8 @@ because an API error body or a network error can quote whatever it was sent. One
 the sweep, on configuration, logs the validation message, which names the rule and never the value.
 `test/secrets.test.ts` drives the sweep through a network error, an API error body and a malformed
 response that each quote the secret, a reconciliation that cannot start because the secret is
-malformed, and the failure paths of the catalogue and checkout routes, and asserts the secret appears in none of
+malformed, and the failure paths of the catalogue and checkout routes, including an environment without a default
+provider, and asserts the secret appears in none of
 the captured log lines or responses. A live price read that fails quoting the secret is covered too.
 The webhook endpoint secret is covered the same way: a valid delivery, a forged signature and a body
 quoting the secret leave it in no log line or response.

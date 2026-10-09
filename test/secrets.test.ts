@@ -9,6 +9,7 @@ import { emptyCatalogue, putProduct } from "../src/catalogue/merchant";
 import { memoryStore } from "../src/catalogue/store";
 import { createApp } from "../src/http/app";
 import { fakeCatalogueApi, product } from "./fakes/catalogue-api";
+import { fakeHostedCheckoutApi } from "./fakes/checkout-api";
 import { link, merchantProduct } from "./fakes/merchant";
 import { fakePaymentsApi, oneTimeCatalogue } from "./fakes/payments-api";
 import { productEvent, signed, WEBHOOK_SECRET } from "./fakes/webhook";
@@ -152,6 +153,38 @@ describe("the confidential secret", () => {
     expect(responses.map((response) => response.text).join("\n")).not.toContain(FAKE_SECRET);
     expect(lines.join("\n")).not.toContain(FAKE_SECRET);
     expect(JSON.stringify(api.catalogue.requests)).not.toContain(FAKE_SECRET);
+  });
+
+  it("stays out of the answers and log when the environment has no default provider", async () => {
+    const api = fakeHostedCheckoutApi();
+    api.payments.failure = Response.json(
+      { error: "default_provider_not_configured", message: `no default for ${FAKE_SECRET}` },
+      { status: 409 },
+    );
+    api.failure = Response.json(
+      { error: "checkout_live_not_enabled", message: `refused ${FAKE_SECRET}` },
+      { status: 409 },
+    );
+    const order = { orderId: "A1", sku: "TSHIRT", email: "buyer@example.test" };
+    const withProvider = testContext(
+      { BUPAYMENT_CHECKOUT_DESTINATION: "tours", BUPAYMENT_CHECKOUT_PROVIDER: "trust-my-travel" },
+      { fetch: api.fetch },
+    );
+    const withoutProvider = testContext({}, { fetch: api.fetch });
+
+    const responses = await Promise.all(
+      [withProvider, withoutProvider].map(({ context }) =>
+        request(createApp({ ...context, catalogue: memoryStore(sellableCatalogue()) }))
+          .post("/checkout")
+          .send(order),
+      ),
+    );
+
+    expect(responses.map((response) => response.status)).toEqual([502, 503]);
+    const lines = [...withProvider.lines, ...withoutProvider.lines];
+    const everything = [...responses.map((response) => response.text), ...lines].join("\n");
+    expect(everything).not.toContain(FAKE_SECRET);
+    expect(JSON.stringify(api.requests)).not.toContain(FAKE_SECRET);
   });
 
   it("keeps the webhook endpoint secret out of the log and every webhook response", async () => {
