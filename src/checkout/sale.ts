@@ -8,7 +8,7 @@ import {
   type HostedCheckoutSettings,
   openHostedCheckout,
 } from "./hosted";
-import { heldBy, orderReservation } from "./reservation";
+import { deferredRelease, heldBy, orderReservation } from "./reservation";
 
 export interface Order {
   orderId: string;
@@ -59,19 +59,27 @@ export async function sell(
       reason: placed.sku === order.sku ? "checkout_closed" : "order_mismatch",
     };
   }
+  const reservation = orderReservation(store, order.orderId, product.sku);
   if (placed === undefined) {
+    const direct = deferredRelease(reservation);
     try {
-      return await bupayment.sales
+      const result = await bupayment.sales
         .draft()
         .priceId(link.priceId)
         .displayedPrice(shown)
         .customerEmail(order.email)
         .reference(product.sku)
-        .reservation(orderReservation(store, order.orderId, product.sku))
+        .reservation(direct.reservation)
         .idempotencyKey(`order-${order.orderId}`)
         .charge();
+      await direct.flush();
+      return result;
     } catch (error) {
-      if (!cannotChargeDirectly(error)) {
+      const fallsBack = cannotChargeDirectly(error);
+      if (!fallsBack || hosted === null) {
+        await direct.flush();
+      }
+      if (!fallsBack) {
         throw error;
       }
     }
@@ -82,7 +90,7 @@ export async function sell(
   return await openHostedCheckout(
     bupayment,
     store,
-    { ...order, priceId: link.priceId, shown },
+    { ...order, priceId: link.priceId, shown, alreadyHeld: held !== undefined },
     hosted,
   );
 }

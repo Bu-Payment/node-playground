@@ -343,9 +343,11 @@ checkout; once that checkout has settled, the order answers `409 checkout_closed
 has an open checkout that still holds it, and answers `502 checkout_refused` with the API code as
 `reason`; a changed price answers `409 price_changed` as
 above. A timeout, a network failure, an unreadable answer, a key already used with another body or another
-5xx may hide a created checkout, so the unit stays held and the answer is `202 confirming`. The check
-for a recorded checkout runs after the request, so a duplicate submit refused while the first one
-recorded its checkout does not release that checkout's unit.
+5xx may hide a created checkout, so the unit stays held and the answer is `202 confirming`. A refusal
+gives the unit back only when the order held none before the request and no checkout is recorded for
+it after: a retry after an unconfirmed attempt, or a duplicate submit, never frees a unit a live
+checkout may still need. The direct sale's own release waits until the playground knows it will not
+fall back to the checkout.
 
 The webhook settles the unit, once per `checkoutId`:
 

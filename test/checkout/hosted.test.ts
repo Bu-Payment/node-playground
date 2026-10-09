@@ -187,6 +187,36 @@ describe("sell through the hosted checkout", () => {
     expect(placed.store.load().reservations).toEqual({ A1: "TSHIRT" });
   });
 
+  it("keeps the unit after an unconfirmed attempt when the retry is refused", async () => {
+    const api = fakeHostedCheckoutApi();
+    api.failure = "network";
+    const { stock, store, sell: sale } = setup({}, api);
+    await sale();
+    api.failure = Response.json({ error: "price_changed", message: "Changed" }, { status: 409 });
+
+    expect(await sale()).toMatchObject({ outcome: "price_changed" });
+    expect(stock()).toBe(2);
+    expect(store.load().reservations).toEqual({ A1: "TSHIRT" });
+  });
+
+  it("holds the unit again when a concurrent refusal gave it back before the checkout was recorded", async () => {
+    const api = fakeHostedCheckoutApi();
+    const placed = setup({}, { ...api, fetch: releasingFirst });
+    async function releasingFirst(...args: Parameters<typeof api.fetch>) {
+      if (new URL(args[0]).pathname === "/v1/checkouts") {
+        const catalogue = placed.store.load();
+        catalogue.reservations = {};
+        catalogue.products.TSHIRT = { ...TSHIRT, stock: 3 };
+        placed.store.save(catalogue);
+      }
+      return api.fetch(...args);
+    }
+
+    expect(await placed.sell()).toMatchObject({ outcome: "checkout_open" });
+    expect(placed.stock()).toBe(2);
+    expect(placed.store.load().reservations).toEqual({ A1: "TSHIRT" });
+  });
+
   it.each([
     ["the network fails", "network" as const],
     [

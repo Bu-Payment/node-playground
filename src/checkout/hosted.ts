@@ -23,6 +23,7 @@ export interface HostedOrder {
   email: string;
   priceId: string;
   shown: ExpectedPrice;
+  alreadyHeld: boolean;
 }
 
 export type HostedCheckoutResult =
@@ -62,7 +63,7 @@ export async function openHostedCheckout(
     if (mayHaveBeenCreated(error)) {
       return { outcome: "unconfirmed", error };
     }
-    if (checkoutOfOrder(store.load(), order.orderId) === undefined) {
+    if (!order.alreadyHeld && checkoutOfOrder(store.load(), order.orderId) === undefined) {
       await reservation.release();
     }
     if (isPriceChanged(error)) {
@@ -70,6 +71,7 @@ export async function openHostedCheckout(
     }
     return { outcome: "checkout_refused", error };
   }
+  await reservation.reserve();
   recordCheckout(store, checkout.id, { orderId: order.orderId, sku: order.sku, settled: null });
   return { outcome: "checkout_open", checkout };
 }

@@ -36,6 +36,24 @@ export function keepHeldUnit(catalogue: MerchantCatalogue, orderId: string, sku:
   return true;
 }
 
+export function deferredRelease(reservation: SaleReservation) {
+  let releaseRequested = false;
+  return {
+    reservation: {
+      reserve: reservation.reserve,
+      release: () => {
+        releaseRequested = true;
+      },
+    } satisfies SaleReservation,
+    flush: async () => {
+      if (releaseRequested) {
+        releaseRequested = false;
+        await reservation.release();
+      }
+    },
+  };
+}
+
 export function orderReservation(
   store: CatalogueStore,
   orderId: string,
