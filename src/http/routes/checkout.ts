@@ -140,6 +140,7 @@ function refuse(response: Response, reason: CheckoutRefusal | "out_of_stock") {
 const REFUSAL_STATUS: Partial<Record<CheckoutRefusal | "out_of_stock", number>> = {
   product_not_found: 404,
   checkout_not_configured: 503,
+  default_provider_not_configured: 503,
 };
 
 const CHECKOUT_REFUSALS: Record<CheckoutRefusal | "out_of_stock", string> = {
@@ -151,4 +152,6 @@ const CHECKOUT_REFUSALS: Record<CheckoutRefusal | "out_of_stock", string> = {
   checkout_closed: "That order's checkout is already settled. Use a new orderId.",
   checkout_not_configured:
     "The provider needs a hosted checkout and no checkout destination is configured.",
+  default_provider_not_configured:
+    "The BuPayment environment has no default provider. Choose one for the environment, or set BUPAYMENT_CHECKOUT_DESTINATION and BUPAYMENT_CHECKOUT_PROVIDER.",
 };

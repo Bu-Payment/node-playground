@@ -1,7 +1,7 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { appWith } from "../fakes/app";
-import { CHECKOUT_URL, fakeHostedCheckoutApi } from "../fakes/checkout-api";
+import { CHECKOUT_URL, fakeHostedCheckoutApi, withoutDefaultProvider } from "../fakes/checkout-api";
 import { link, merchantProduct } from "../fakes/merchant";
 
 const TSHIRT = merchantProduct({
@@ -110,5 +110,48 @@ describe("POST /checkout through the hosted checkout", () => {
       code: "checkout_closed",
       message: "That order's checkout is already settled. Use a new orderId.",
     });
+  });
+
+  it("opens the checkout with the configured provider when the environment has no default", async () => {
+    const api = withoutDefaultProvider(fakeHostedCheckoutApi());
+    const { app, lines } = appWith([TSHIRT], api.fetch, CHECKOUT_ENV);
+
+    const response = await request(app).post("/checkout").send(ORDER);
+
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({ checkoutUrl: CHECKOUT_URL, stock: 2 });
+    expect(api.requests[0]?.body).toMatchObject({ provider: "trust-my-travel" });
+    expect(lines.join("\n")).not.toContain(CHECKOUT_URL);
+  });
+
+  it("answers 503 asking for a default provider when no checkout provider is configured", async () => {
+    const api = withoutDefaultProvider(fakeHostedCheckoutApi());
+    const { app } = appWith([TSHIRT], api.fetch, {
+      BUPAYMENT_CHECKOUT_DESTINATION: "tours",
+    });
+
+    const response = await request(app).post("/checkout").send(ORDER);
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      code: "default_provider_not_configured",
+      message:
+        "The BuPayment environment has no default provider. Choose one for the environment, or set BUPAYMENT_CHECKOUT_DESTINATION and BUPAYMENT_CHECKOUT_PROVIDER.",
+    });
+    expect(api.requests).toEqual([]);
+  });
+
+  it("answers 503 asking for a default provider when no checkout is configured", async () => {
+    const api = withoutDefaultProvider(fakeHostedCheckoutApi());
+    const { app } = appWith([TSHIRT], api.fetch, {
+      BUPAYMENT_CHECKOUT_PROVIDER: "trust-my-travel",
+    });
+
+    const response = await request(app).post("/checkout").send(ORDER);
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({ code: "default_provider_not_configured" });
+    expect(response.body.message).toContain("BUPAYMENT_CHECKOUT_DESTINATION");
+    expect(api.requests).toEqual([]);
   });
 });
