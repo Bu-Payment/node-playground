@@ -1,9 +1,9 @@
 import { BuPaymentError } from "@bu-payment/node-sdk";
-import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/http/app";
 import type { AppContext } from "../../src/runtime/context";
 import { FAKE_SECRET, testContext } from "../fixtures";
+import { serve } from "../serve";
 
 function contextThatFailsOnHealth(failure: unknown): {
   context: AppContext;
@@ -25,7 +25,7 @@ describe("createApp", () => {
   it("reports health without disclosing any credential", async () => {
     const { context } = testContext();
 
-    const response = await request(createApp(context)).get("/healthz");
+    const response = await (await serve(createApp(context))).get("/healthz");
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: "ok", environment: "test" });
@@ -35,7 +35,7 @@ describe("createApp", () => {
   it("does not announce the server implementation", async () => {
     const { context } = testContext();
 
-    const response = await request(createApp(context)).get("/healthz");
+    const response = await (await serve(createApp(context))).get("/healthz");
 
     expect(response.headers["x-powered-by"]).toBeUndefined();
   });
@@ -43,7 +43,7 @@ describe("createApp", () => {
   it("answers an unknown route with a canonical shape", async () => {
     const { context } = testContext();
 
-    const response = await request(createApp(context)).get("/nope");
+    const response = await (await serve(createApp(context))).get("/nope");
 
     expect(response.status).toBe(404);
     expect(response.body).toEqual({ code: "route_not_found", message: "No such route." });
@@ -57,7 +57,7 @@ describe("createApp", () => {
       }),
     );
 
-    const response = await request(createApp(context)).get("/healthz");
+    const response = await (await serve(createApp(context))).get("/healthz");
 
     expect(response.status).toBe(502);
     expect(response.body).toEqual({
@@ -69,7 +69,7 @@ describe("createApp", () => {
   it("keeps an unexpected failure out of the response body and the log", async () => {
     const { context, lines } = contextThatFailsOnHealth(new Error(`secret leaked: ${FAKE_SECRET}`));
 
-    const response = await request(createApp(context)).get("/healthz");
+    const response = await (await serve(createApp(context))).get("/healthz");
 
     expect(response.status).toBe(500);
     expect(response.text).not.toContain(FAKE_SECRET);
@@ -87,7 +87,7 @@ describe("createApp", () => {
   it("blames the caller for a malformed request body", async () => {
     const { context } = testContext();
 
-    const response = await request(createApp(context))
+    const response = await (await serve(createApp(context)))
       .post("/healthz")
       .set("Content-Type", "application/json")
       .send("{");
@@ -102,7 +102,7 @@ describe("createApp", () => {
   it("refuses a request body above the documented limit", async () => {
     const { context } = testContext();
 
-    const response = await request(createApp(context))
+    const response = await (await serve(createApp(context)))
       .post("/healthz")
       .set("Content-Type", "application/json")
       .send(JSON.stringify({ padding: "x".repeat(70_000) }));

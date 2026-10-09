@@ -1,4 +1,3 @@
-import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { appWith } from "../fakes/app";
 import { fakeCatalogueApi, price, product } from "../fakes/catalogue-api";
@@ -16,7 +15,7 @@ const LIVE = merchantProduct({
 
 describe("GET /catalogue", () => {
   it("serves stored prices and the merchant's own fields with BuPayment unreachable", async () => {
-    const { app } = appWith([
+    const { app } = await appWith([
       merchantProduct({
         sku: "TICKET",
         title: "Ticket",
@@ -26,7 +25,7 @@ describe("GET /catalogue", () => {
       merchantProduct({ sku: "LOCAL", title: "Local only" }),
     ]);
 
-    const response = await request(app).get("/catalogue");
+    const response = await app.get("/catalogue");
 
     expect(response.status).toBe(200);
     expect(response.body.products).toEqual([
@@ -55,9 +54,9 @@ describe("GET /catalogue", () => {
     const api = fakeCatalogueApi({
       prices: [price({ id: "price_1", productId: "prod_1", unitAmount: 1200 })],
     });
-    const { app, store } = appWith([LIVE], api.fetch);
+    const { app, store } = await appWith([LIVE], api.fetch);
 
-    const response = await request(app).get("/catalogue");
+    const response = await app.get("/catalogue");
 
     expect(response.body.products[0].price).toEqual({
       amount: 1200,
@@ -83,7 +82,7 @@ describe("GET /catalogue", () => {
       sku: "PASS_2",
       bupayment: link({ productId: "prod_2", priceId: "price_2" }),
     };
-    const { app, store } = appWith([LIVE, second], api.fetch);
+    const { app, store } = await appWith([LIVE, second], api.fetch);
     let saves = 0;
     const save = store.save.bind(store);
     store.save = (catalogue) => {
@@ -91,28 +90,28 @@ describe("GET /catalogue", () => {
       save(catalogue);
     };
 
-    await request(app).get("/catalogue");
+    await app.get("/catalogue");
 
     expect(saves).toBe(1);
     expect(store.load().products.PASS_2?.pricing).toMatchObject({ lastKnown: { amount: 1300 } });
   });
 
   it("does not write when no live price was read", async () => {
-    const { app, store } = appWith([merchantProduct({ sku: "TICKET" })]);
+    const { app, store } = await appWith([merchantProduct({ sku: "TICKET" })]);
     let saves = 0;
     store.save = () => {
       saves += 1;
     };
 
-    await request(app).get("/catalogue");
+    await app.get("/catalogue");
 
     expect(saves).toBe(0);
   });
 
   it("falls back to the last known live price when BuPayment is unreachable", async () => {
-    const { app } = appWith([LIVE]);
+    const { app } = await appWith([LIVE]);
 
-    const response = await request(app).get("/catalogue");
+    const response = await app.get("/catalogue");
 
     expect(response.status).toBe(200);
     expect(response.body.products[0].price).toEqual({
@@ -124,9 +123,9 @@ describe("GET /catalogue", () => {
   });
 
   it("shows no price for a live product never read and BuPayment unreachable", async () => {
-    const { app } = appWith([{ ...LIVE, pricing: { mode: "live", lastKnown: null } }]);
+    const { app } = await appWith([{ ...LIVE, pricing: { mode: "live", lastKnown: null } }]);
 
-    expect((await request(app).get("/catalogue")).body.products[0].price).toBeNull();
+    expect((await app.get("/catalogue")).body.products[0].price).toBeNull();
   });
 });
 
@@ -140,9 +139,9 @@ describe("POST /products", () => {
   };
 
   it("creates an unlinked product with a local price", async () => {
-    const { app, store } = appWith([]);
+    const { app, store } = await appWith([]);
 
-    const response = await request(app).post("/products").send(body);
+    const response = await app.post("/products").send(body);
 
     expect(response.status).toBe(201);
     expect(store.load().products.TICKET).toEqual({
@@ -157,9 +156,9 @@ describe("POST /products", () => {
   });
 
   it("refuses a SKU that already exists", async () => {
-    const { app } = appWith([merchantProduct({ sku: "TICKET" })]);
+    const { app } = await appWith([merchantProduct({ sku: "TICKET" })]);
 
-    const response = await request(app).post("/products").send(body);
+    const response = await app.post("/products").send(body);
 
     expect(response.status).toBe(409);
     expect(response.body.code).toBe("product_exists");
@@ -171,9 +170,9 @@ describe("POST /products", () => {
     { ...body, price: { amount: -1, currency: "EUR" } },
     { ...body, price: { amount: 1, currency: "eur" } },
   ])("refuses %o", async (invalid) => {
-    const { app, store } = appWith([]);
+    const { app, store } = await appWith([]);
 
-    const response = await request(app).post("/products").send(invalid);
+    const response = await app.post("/products").send(invalid);
 
     expect(response.status).toBe(422);
     expect(response.body.code).toBe("product_invalid");
@@ -189,9 +188,9 @@ describe("PUT /products/:sku/link", () => {
     });
 
   it("links a local product to a BuPayment product and price", async () => {
-    const { app, store } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+    const { app, store } = await appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
 
-    const response = await request(app)
+    const response = await app
       .put("/products/TICKET/link")
       .send({ productId: "prod_1", priceId: "price_1", pricing: "stored" });
 
@@ -200,9 +199,9 @@ describe("PUT /products/:sku/link", () => {
   });
 
   it.each(["__proto__", "UNKNOWN"])("answers 404 for the local SKU %s", async (sku) => {
-    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+    const { app } = await appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
 
-    const response = await request(app)
+    const response = await app
       .put(`/products/${sku}/link`)
       .send({ productId: "prod_1", priceId: "price_1", pricing: "stored" });
 
@@ -211,9 +210,9 @@ describe("PUT /products/:sku/link", () => {
   });
 
   it("refuses a price of another product", async () => {
-    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+    const { app } = await appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
 
-    const response = await request(app)
+    const response = await app
       .put("/products/TICKET/link")
       .send({ productId: "prod_2", priceId: "price_1", pricing: "stored" });
 
@@ -226,9 +225,9 @@ describe("PUT /products/:sku/link", () => {
       products: [product({ id: "prod_1" })],
       prices: [price({ id: "price_1", productId: "prod_1", active: false })],
     });
-    const { app } = appWith([merchantProduct({ sku: "TICKET" })], archived.fetch);
+    const { app } = await appWith([merchantProduct({ sku: "TICKET" })], archived.fetch);
 
-    const response = await request(app)
+    const response = await app
       .put("/products/TICKET/link")
       .send({ productId: "prod_1", priceId: "price_1", pricing: "live" });
 
@@ -237,9 +236,9 @@ describe("PUT /products/:sku/link", () => {
   });
 
   it("refuses a malformed link request", async () => {
-    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+    const { app } = await appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
 
-    const response = await request(app)
+    const response = await app
       .put("/products/TICKET/link")
       .send({ productId: "prod_1", priceId: "price_1", pricing: "cached" });
 
@@ -248,9 +247,9 @@ describe("PUT /products/:sku/link", () => {
   });
 
   it("maps a BuPayment 404 to the canonical SDK failure", async () => {
-    const { app } = appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
+    const { app } = await appWith([merchantProduct({ sku: "TICKET" })], api().fetch);
 
-    const response = await request(app)
+    const response = await app
       .put("/products/TICKET/link")
       .send({ productId: "prod_missing", priceId: "price_1", pricing: "stored" });
 
