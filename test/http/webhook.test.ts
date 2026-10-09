@@ -5,7 +5,7 @@ import { memoryStore } from "../../src/catalogue/store";
 import { createApp } from "../../src/http/app";
 import { product } from "../fakes/catalogue-api";
 import { link, merchantProduct } from "../fakes/merchant";
-import { productEvent, signed, WEBHOOK_SECRET } from "../fakes/webhook";
+import { checkoutEvent, productEvent, signed, WEBHOOK_SECRET } from "../fakes/webhook";
 import { testContext } from "../fixtures";
 
 const LATER = "2026-09-20T00:00:00.000Z";
@@ -130,6 +130,48 @@ describe("POST /webhooks/bupayment", () => {
     const second = await post(app, delivery);
 
     expect([first.body.outcome, second.body.outcome]).toEqual(["applied", "duplicate"]);
+  });
+
+  it("sells the held unit when the checkout completes", async () => {
+    const { app, store, lines } = webhookApp();
+    const held = store.load();
+    held.reservations.A1 = "TICKET";
+    held.checkouts.chk_1 = { orderId: "A1", sku: "TICKET", settled: null };
+    store.save(held);
+    const before = store.load().products;
+
+    const response = await post(app, signed(checkoutEvent("checkout.completed")));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ received: true, outcome: "applied" });
+    expect(store.load().products).toEqual(before);
+    expect(store.load().checkouts.chk_1?.settled).toBe("sold");
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
+      type: "checkout.completed",
+      settlement: "sold",
+    });
+  });
+
+  it("gives the held unit back when the checkout expires, and ignores the replay of another id", async () => {
+    const { app, store, lines } = webhookApp();
+    const held = store.load();
+    held.reservations.A1 = "TICKET";
+    held.checkouts.chk_1 = { orderId: "A1", sku: "TICKET", settled: null };
+    store.save(held);
+    const stock = store.load().products.TICKET?.stock ?? 0;
+
+    const expired = await post(app, signed(checkoutEvent("checkout.expired")));
+    const again = await post(
+      app,
+      signed(checkoutEvent("checkout.cancelled"), { deliveryId: "dlv_2" }),
+    );
+
+    expect([expired.body.outcome, again.body.outcome]).toEqual(["applied", "ignored"]);
+    expect(store.load().products.TICKET?.stock).toBe(stock + 1);
+    expect(lines.map((line) => JSON.parse(line).settlement)).toEqual([
+      "released",
+      "already_settled",
+    ]);
   });
 
   it("answers 503 when no endpoint secret is configured", async () => {

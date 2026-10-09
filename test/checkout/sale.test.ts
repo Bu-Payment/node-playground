@@ -23,7 +23,7 @@ function setup(local: MerchantProduct = STORED, api: PaymentsApi = fakePaymentsA
     store,
     stock: () => store.load().products.TSHIRT?.stock,
     sell: (orderId = "A1", sku = "TSHIRT") =>
-      sell(client, store, { orderId, sku, email: "buyer@example.test" }),
+      sell(client, store, { orderId, sku, email: "buyer@example.test" }, null),
   };
 }
 
@@ -211,7 +211,7 @@ describe("sell", () => {
   it("gives the unit back and lets any other API failure through", async () => {
     const api = fakePaymentsApi();
     api.failure = Response.json(
-      { error: "provider_capability_not_supported", message: "No charges" },
+      { error: "payment_method_required", message: "No method" },
       { status: 422 },
     );
     const { store, stock, sell: sale } = setup(STORED, api);

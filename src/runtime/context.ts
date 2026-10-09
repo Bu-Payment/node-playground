@@ -6,6 +6,7 @@ import {
   parseClientConfig,
 } from "@bu-payment/node-sdk";
 import { type CatalogueStore, fileStore } from "../catalogue/store";
+import type { HostedCheckoutSettings } from "../checkout/hosted";
 import type { Env } from "./env";
 import type { Logger } from "./logger";
 
@@ -19,6 +20,7 @@ export interface AppContext {
   readonly bupayment: BuPaymentClient;
   readonly catalogue: CatalogueStore;
   readonly webhookSecret: string | null;
+  readonly hostedCheckout: HostedCheckoutSettings | null;
   readonly server: ServerAddress;
   readonly logger: Logger;
 }
@@ -35,7 +37,15 @@ export function createContext(env: Env, logger: Logger, options: ClientOptions =
     bupayment: createBuPaymentClient(credentials, options),
     catalogue: fileStore(env.CATALOGUE_STORE_PATH),
     webhookSecret: env.BUPAYMENT_WEBHOOK_SECRET ?? null,
+    hostedCheckout: hostedCheckoutOf(env),
     server: { host: env.HOST, port: env.PORT },
     logger,
   };
+}
+
+function hostedCheckoutOf(env: Env): HostedCheckoutSettings | null {
+  const destination = env.BUPAYMENT_CHECKOUT_DESTINATION;
+  return destination === undefined
+    ? null
+    : { destination, provider: env.BUPAYMENT_CHECKOUT_PROVIDER ?? null };
 }

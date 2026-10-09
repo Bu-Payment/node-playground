@@ -45,6 +45,25 @@ describe("createContext", () => {
     expect(context.server).toEqual({ host: "0.0.0.0", port: 9100 });
   });
 
+  it("carries the hosted checkout only when a destination is configured", () => {
+    const configured = testContext({
+      BUPAYMENT_CHECKOUT_DESTINATION: "tours",
+      BUPAYMENT_CHECKOUT_PROVIDER: "trust-my-travel",
+    }).context;
+
+    expect(configured.hostedCheckout).toEqual({
+      destination: "tours",
+      provider: "trust-my-travel",
+    });
+    expect(testContext({ BUPAYMENT_CHECKOUT_DESTINATION: "tours" }).context.hostedCheckout).toEqual(
+      {
+        destination: "tours",
+        provider: null,
+      },
+    );
+    expect(testContext().context.hostedCheckout).toBeNull();
+  });
+
   it("rejects a credential whose key ID does not match the declared environment", () => {
     const call = () =>
       createContext(parseEnv({ ...VALID_ENV, BUPAYMENT_KEY_ID: "nonsense" }), createLogger());

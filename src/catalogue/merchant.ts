@@ -47,10 +47,18 @@ const ReceivedWebhooksSchema = z.object({
   events: z.record(z.string(), z.string()),
 });
 
+const OrderCheckoutSchema = z.object({
+  orderId: z.string(),
+  sku: z.string(),
+  settled: z.enum(["sold", "released"]).nullable(),
+});
+
 export const MerchantCatalogueSchema = z.object({
   products: z.record(z.string(), MerchantProductSchema),
   received: ReceivedWebhooksSchema.default({ deliveries: {}, events: {} }),
   reservations: z.record(z.string(), z.string()).default({}),
+  checkouts: z.record(z.string(), OrderCheckoutSchema).default({}),
+  hostedOrders: z.record(z.string(), z.string()).default({}),
 });
 
 export const PRICING_MODES = ["stored", "live"] as const;
@@ -58,9 +66,16 @@ export type PricingMode = (typeof PRICING_MODES)[number];
 export type CatalogueLink = z.infer<typeof LinkFactsSchema>;
 export type MerchantProduct = z.infer<typeof MerchantProductSchema>;
 export type MerchantCatalogue = z.infer<typeof MerchantCatalogueSchema>;
+export type OrderCheckout = z.infer<typeof OrderCheckoutSchema>;
 
 export function emptyCatalogue(): MerchantCatalogue {
-  return { products: {}, received: { deliveries: {}, events: {} }, reservations: {} };
+  return {
+    products: {},
+    received: { deliveries: {}, events: {} },
+    reservations: {},
+    checkouts: {},
+    hostedOrders: {},
+  };
 }
 
 export function isSellable(link: CatalogueLink | null): boolean {
