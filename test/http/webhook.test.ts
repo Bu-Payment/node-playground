@@ -132,15 +132,24 @@ describe("POST /webhooks/bupayment", () => {
     expect([first.body.outcome, second.body.outcome]).toEqual(["applied", "duplicate"]);
   });
 
-  it("acknowledges a checkout delivery without touching the catalogue", async () => {
-    const { app, store } = webhookApp();
+  it("sells the held unit when the checkout completes", async () => {
+    const { app, store, lines } = webhookApp();
+    const held = store.load();
+    held.reservations.A1 = "TICKET";
+    held.checkouts.chk_1 = { orderId: "A1", sku: "TICKET", settled: null };
+    store.save(held);
     const before = store.load().products;
 
     const response = await post(app, signed(checkoutEvent("checkout.completed")));
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ received: true, outcome: "ignored" });
+    expect(response.body).toEqual({ received: true, outcome: "applied" });
     expect(store.load().products).toEqual(before);
+    expect(store.load().checkouts.chk_1?.settled).toBe("sold");
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
+      type: "checkout.completed",
+      settlement: "sold",
+    });
   });
 
   it("answers 503 when no endpoint secret is configured", async () => {

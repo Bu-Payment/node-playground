@@ -31,6 +31,7 @@ export function webhookRoute(context: AppContext): RequestHandler {
       applied: report.applied.length,
       stale: report.stale.length,
       replacements: report.replacements.length,
+      ...(report.settlement === undefined ? {} : { settlement: report.settlement }),
     });
     response.json({ received: true, outcome: report.outcome });
   };

@@ -5,8 +5,8 @@ import {
   type Price,
   type Product,
   type VerifiedWebhookDelivery,
-  type WebhookEvent,
 } from "@bu-payment/node-sdk";
+import { isCheckoutEvent, type SettlementOutcome, settleCheckout } from "../checkout/settlement";
 import { collect } from "./collect";
 import { applyCatalogueEvent, defaultPriceIdOf } from "./events";
 import { indexRemote, type LinkOutcome, syncLink } from "./link-sync";
@@ -28,6 +28,7 @@ export interface DeliveryReport {
   stale: string[];
   replacements: { sku: string; outcome: ReplacementOutcome }[];
   unlinked: string[];
+  settlement?: SettlementOutcome;
 }
 
 export async function receiveDelivery(
@@ -51,9 +52,14 @@ export async function receiveDelivery(
     replacements: [],
     unlinked: [],
   };
-  if (seen || !isCatalogueEvent(event)) {
+  if (seen || event.type === "unknown") {
     store.save(local);
     return { ...report, outcome: seen ? "duplicate" : "ignored" };
+  }
+  if (isCheckoutEvent(event)) {
+    const settlement = settleCheckout(local, event);
+    store.save(local);
+    return { ...report, settlement };
   }
   const awaiting: string[] = [];
   for (const product of Object.values(local.products)) {
@@ -166,10 +172,6 @@ function isLinked(catalogue: MerchantCatalogue, productId: string): boolean {
   return Object.values(catalogue.products).some(
     (product) => product.bupayment?.productId === productId,
   );
-}
-
-function isCatalogueEvent(event: WebhookEvent): event is CatalogueEvent {
-  return event.type.startsWith("catalogue.");
 }
 
 function record(ids: Record<string, string>, id: string, at: string): void {
