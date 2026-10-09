@@ -166,8 +166,34 @@ describe("sell through the hosted checkout", () => {
     expect(store.load().reservations).toEqual({ A1: "TSHIRT" });
   });
 
+  it("keeps the unit when the order's checkout is recorded while a duplicate request is refused", async () => {
+    const api = fakeHostedCheckoutApi();
+    const placed = setup({}, { ...api, fetch: recordingFirst });
+    async function recordingFirst(...args: Parameters<typeof api.fetch>) {
+      if (new URL(args[0]).pathname === "/v1/checkouts") {
+        const catalogue = placed.store.load();
+        catalogue.checkouts.chk_1 = { orderId: "A1", sku: "TSHIRT", settled: null };
+        placed.store.save(catalogue);
+        return Response.json(
+          { error: "checkout_destination_unavailable", message: "No" },
+          { status: 409 },
+        );
+      }
+      return api.fetch(...args);
+    }
+
+    expect(await placed.sell()).toMatchObject({ outcome: "checkout_refused" });
+    expect(placed.stock()).toBe(2);
+    expect(placed.store.load().reservations).toEqual({ A1: "TSHIRT" });
+  });
+
   it.each([
     ["the network fails", "network" as const],
+    [
+      "the same key carried another body",
+      Response.json({ error: "idempotency_conflict", message: "Other body" }, { status: 409 }),
+    ],
+    ["the answer cannot be read", new Response("not json", { status: 201 })],
     [
       "another request with the key is in progress",
       Response.json({ error: "idempotency_in_progress", message: "Wait" }, { status: 409 }),

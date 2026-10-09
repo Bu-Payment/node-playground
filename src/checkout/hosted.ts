@@ -3,6 +3,7 @@ import {
   BuPaymentError,
   type Checkout,
   type CurrentPrice,
+  ErrorCode,
   type ExpectedPrice,
   isPriceChanged,
 } from "@bu-payment/node-sdk";
@@ -33,6 +34,14 @@ export type HostedCheckoutResult =
 
 const DEFINITE_REFUSALS = new Set(["checkout_unavailable", "checkout_provider_failed"]);
 
+const UNCERTAIN_OUTCOMES = new Set<string>([
+  ErrorCode.NETWORK_UNAVAILABLE,
+  ErrorCode.REQUEST_CANCELLED,
+  ErrorCode.RESPONSE_INVALID,
+  ErrorCode.IDEMPOTENCY_CONFLICT,
+  "idempotency_in_progress",
+]);
+
 export async function openHostedCheckout(
   bupayment: Pick<BuPaymentClient, "checkout">,
   store: CatalogueStore,
@@ -43,7 +52,6 @@ export async function openHostedCheckout(
   if (!(await reservation.reserve())) {
     return { outcome: "unavailable" };
   }
-  const alreadyOpen = checkoutOfOrder(store.load(), order.orderId) !== undefined;
   let checkout: Checkout;
   try {
     checkout = await createCheckout(bupayment, order, settings);
@@ -54,7 +62,7 @@ export async function openHostedCheckout(
     if (mayHaveBeenCreated(error)) {
       return { outcome: "unconfirmed", error };
     }
-    if (!alreadyOpen) {
+    if (checkoutOfOrder(store.load(), order.orderId) === undefined) {
       await reservation.release();
     }
     if (isPriceChanged(error)) {
@@ -94,9 +102,10 @@ function mayHaveBeenCreated(error: BuPaymentError): boolean {
   if (apiError !== null && DEFINITE_REFUSALS.has(apiError)) {
     return false;
   }
-  return (
-    error.status === undefined || error.status >= 500 || apiError === "idempotency_in_progress"
-  );
+  if (UNCERTAIN_OUTCOMES.has(error.code) || UNCERTAIN_OUTCOMES.has(apiError ?? "")) {
+    return true;
+  }
+  return error.status !== undefined && error.status >= 500;
 }
 
 function recordCheckout(store: CatalogueStore, checkoutId: string, placed: OrderCheckout): void {
