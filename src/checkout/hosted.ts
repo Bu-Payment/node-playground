@@ -53,6 +53,7 @@ export async function openHostedCheckout(
   if (!(await reservation.reserve())) {
     return { outcome: "unavailable" };
   }
+  markHostedOrder(store, order);
   let checkout: Checkout;
   try {
     checkout = await createCheckout(bupayment, order, settings);
@@ -74,6 +75,10 @@ export async function openHostedCheckout(
   await reservation.reserve();
   recordCheckout(store, checkout.id, { orderId: order.orderId, sku: order.sku, settled: null });
   return { outcome: "checkout_open", checkout };
+}
+
+export function isHostedOrder(catalogue: MerchantCatalogue, orderId: string): boolean {
+  return Object.hasOwn(catalogue.hostedOrders, orderId);
 }
 
 export function checkoutOfOrder(
@@ -108,6 +113,15 @@ function mayHaveBeenCreated(error: BuPaymentError): boolean {
     return true;
   }
   return error.status !== undefined && error.status >= 500;
+}
+
+function markHostedOrder(store: CatalogueStore, order: HostedOrder): void {
+  const catalogue = store.load();
+  if (isHostedOrder(catalogue, order.orderId)) {
+    return;
+  }
+  defineOwnKey(catalogue.hostedOrders, order.orderId, order.sku);
+  store.save(catalogue);
 }
 
 function recordCheckout(store: CatalogueStore, checkoutId: string, placed: OrderCheckout): void {

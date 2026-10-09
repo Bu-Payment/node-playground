@@ -6,7 +6,7 @@ import {
   type OrderCheckout,
   putProduct,
 } from "../catalogue/merchant";
-import { checkoutOfOrder } from "./hosted";
+import { checkoutOfOrder, isHostedOrder } from "./hosted";
 import { heldBy, keepHeldUnit, returnHeldUnit } from "./reservation";
 
 export type SettlementOutcome =
@@ -80,6 +80,7 @@ function placedCheckout(
   if (
     reference === null ||
     sku === undefined ||
+    !isHostedOrder(catalogue, reference) ||
     checkoutOfOrder(catalogue, reference) !== undefined
   ) {
     return undefined;

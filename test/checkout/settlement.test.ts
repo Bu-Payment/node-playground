@@ -10,6 +10,7 @@ function heldOrder(stock = 2): MerchantCatalogue {
   putProduct(catalogue, merchantProduct({ sku: "TSHIRT", stock }));
   catalogue.reservations.A1 = "TSHIRT";
   catalogue.checkouts.chk_1 = { orderId: "A1", sku: "TSHIRT", settled: null };
+  catalogue.hostedOrders.A1 = "TSHIRT";
   return catalogue;
 }
 
@@ -92,6 +93,16 @@ describe("settleCheckout", () => {
 
     expect(settleAll(catalogue, checkoutEvent("checkout.completed"))).toEqual(["sold"]);
     expect(catalogue.checkouts.chk_1).toEqual({ orderId: "A1", sku: "TSHIRT", settled: "sold" });
+  });
+
+  it("adopts nothing for an order that never tried the checkout", () => {
+    const catalogue = heldOrder();
+    catalogue.checkouts = {};
+    catalogue.hostedOrders = {};
+
+    expect(settleAll(catalogue, checkoutEvent("checkout.expired"))).toEqual(["unknown_checkout"]);
+    expect(catalogue.reservations).toEqual({ A1: "TSHIRT" });
+    expect(catalogue.products.TSHIRT?.stock).toBe(2);
   });
 
   it("adopts nothing for an order that already has a checkout", () => {

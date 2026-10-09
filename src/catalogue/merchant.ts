@@ -58,6 +58,7 @@ export const MerchantCatalogueSchema = z.object({
   received: ReceivedWebhooksSchema.default({ deliveries: {}, events: {} }),
   reservations: z.record(z.string(), z.string()).default({}),
   checkouts: z.record(z.string(), OrderCheckoutSchema).default({}),
+  hostedOrders: z.record(z.string(), z.string()).default({}),
 });
 
 export const PRICING_MODES = ["stored", "live"] as const;
@@ -73,6 +74,7 @@ export function emptyCatalogue(): MerchantCatalogue {
     received: { deliveries: {}, events: {} },
     reservations: {},
     checkouts: {},
+    hostedOrders: {},
   };
 }
 

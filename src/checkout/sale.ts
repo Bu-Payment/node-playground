@@ -6,6 +6,7 @@ import {
   checkoutOfOrder,
   type HostedCheckoutResult,
   type HostedCheckoutSettings,
+  isHostedOrder,
   openHostedCheckout,
 } from "./hosted";
 import { deferredRelease, heldBy, orderReservation } from "./reservation";
@@ -60,7 +61,8 @@ export async function sell(
     };
   }
   const reservation = orderReservation(store, order.orderId, product.sku);
-  if (placed === undefined) {
+  const alreadyHeld = held !== undefined;
+  if (placed === undefined && !isHostedOrder(catalogue, order.orderId)) {
     const direct = deferredRelease(reservation);
     try {
       const result = await bupayment.sales
@@ -90,7 +92,7 @@ export async function sell(
   return await openHostedCheckout(
     bupayment,
     store,
-    { ...order, priceId: link.priceId, shown, alreadyHeld: held !== undefined },
+    { ...order, priceId: link.priceId, shown, alreadyHeld },
     hosted,
   );
 }

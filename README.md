@@ -347,7 +347,8 @@ above. A timeout, a network failure, an unreadable answer, a key already used wi
 gives the unit back only when the order held none before the request and no checkout is recorded for
 it after: a retry after an unconfirmed attempt, or a duplicate submit, never frees a unit a live
 checkout may still need. The direct sale's own release waits until the playground knows it will not
-fall back to the checkout.
+fall back to the checkout, and an order that tried the checkout once never goes back to the direct
+sale.
 
 The webhook settles the unit, once per `checkoutId`:
 
@@ -358,7 +359,8 @@ The webhook settles the unit, once per `checkoutId`:
 | `checkout.completed` after a release | still a sale: one unit is taken again, or the delivery is logged as `oversold` when none is left |
 
 A later event for a settled checkout is logged as `already_settled`. A checkout the playground never
-recorded is adopted through the order its `reference` holds, when that order has no checkout yet;
+recorded is adopted through the order its `reference` holds, when that order tried the checkout and
+has no checkout recorded yet;
 otherwise it is logged as `unknown_checkout`. One whose `reference` names another order is logged as
 `reference_mismatch`. A delivery that moved no stock answers `ignored`, one that did `applied`.
 

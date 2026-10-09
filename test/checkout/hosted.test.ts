@@ -199,6 +199,19 @@ describe("sell through the hosted checkout", () => {
     expect(store.load().reservations).toEqual({ A1: "TSHIRT" });
   });
 
+  it("never goes back to the direct sale once the order tried the checkout", async () => {
+    const api = fakeHostedCheckoutApi();
+    api.failure = "network";
+    const { stock, store, sell: sale } = setup({}, api);
+    await sale();
+    api.failure = null;
+
+    expect(await sale()).toMatchObject({ outcome: "checkout_open", checkout: { id: "chk_1" } });
+    expect(api.directCharges).toBe(1);
+    expect(stock()).toBe(2);
+    expect(store.load().hostedOrders).toEqual({ A1: "TSHIRT" });
+  });
+
   it("holds the unit again when a concurrent refusal gave it back before the checkout was recorded", async () => {
     const api = fakeHostedCheckoutApi();
     const placed = setup({}, { ...api, fetch: releasingFirst });
